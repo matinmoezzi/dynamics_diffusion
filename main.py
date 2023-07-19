@@ -1,0 +1,204 @@
+from datetime import datetime
+import sys
+from pathlib import Path
+
+sys.path.append(str(Path(".").absolute().parent))
+import gym
+import numpy as np
+import d4rl
+from tqdm import tqdm
+import torch
+from torch.utils.data import DataLoader, Dataset
+from torch.utils.tensorboard import SummaryWriter
+
+from diffusion import Diffusion
+from model import MLP
+
+
+def iql_normalize(reward, not_done):
+    trajs_rt = []
+    episode_return = 0.0
+    for i in range(len(reward)):
+        episode_return += reward[i]
+        if not not_done[i]:
+            trajs_rt.append(episode_return)
+            episode_return = 0.0
+    rt_max, rt_min = torch.max(torch.tensor(trajs_rt)), torch.min(
+        torch.tensor(trajs_rt)
+    )
+    reward /= rt_max - rt_min
+    reward *= 1000.0
+    return reward
+
+
+class D4RLDataset(Dataset):
+    def __init__(self, data, reward_tune=None, device="cpu"):
+        self.data = data
+
+        self.state = torch.from_numpy(self.data["observations"]).float()
+        self.action = torch.from_numpy(self.data["actions"]).float()
+        self.next_state = torch.from_numpy(self.data["next_observations"]).float()
+        reward = torch.from_numpy(self.data["rewards"]).view(-1, 1).float()
+        self.not_done = (
+            1.0 - torch.from_numpy(self.data["terminals"]).view(-1, 1).float()
+        )
+
+        self.len = self.state.shape[0]
+        self.state_dim = self.state.shape[1]
+        self.action_dim = self.action.shape[1]
+
+        self.device = device
+
+        if reward_tune == "normalize":
+            reward = (reward - reward.mean()) / reward.std()
+        elif reward_tune == "iql_antmaze":
+            reward = reward - 1.0
+        elif reward_tune == "iql_locomotion":
+            reward = iql_normalize(reward, self.not_done)
+        elif reward_tune == "cql_antmaze":
+            reward = (reward - 0.5) * 4.0
+        elif reward_tune == "antmaze":
+            reward = (reward - 0.25) * 2.0
+
+        self.reward = reward
+
+    def __getitem__(self, idx):
+        ind = idx % self.len
+        return (
+            self.state[ind].to(self.device),
+            self.action[ind].to(self.device),
+            self.next_state[ind].to(self.device),
+            self.reward[ind].to(self.device),
+            self.not_done[ind].to(self.device),
+        )
+
+    def __len__(self):
+        return self.len
+
+
+def split_dict(dict, n):
+    keys = list(dict.keys())
+    train = {k: dict[k][n:] for k in keys}
+    test = {k: dict[k][n:] for k in keys}
+    return train, test
+
+
+def main():
+    device = "cpu"
+    # Initialize offline RL dataset
+    env_name = "maze2d-umaze-v1"
+    env = gym.make(env_name)
+    env.reset()
+    data = d4rl.qlearning_dataset(env)
+
+    data_size = data["observations"].shape[0]
+    state_dim = data["observations"].shape[1]
+    action_dim = data["actions"].shape[1]
+
+    train_data, test_data = split_dict(data, int(0.8 * data_size))
+
+    train_dataset = D4RLDataset(train_data, device=device)
+    test_dataset = D4RLDataset(test_data, device=device)
+
+    train_dataloader = DataLoader(train_dataset, batch_size=5000, shuffle=False)
+
+    test_dataloader = DataLoader(test_dataset, batch_size=5000, shuffle=False)
+
+    model = MLP(x_dim=state_dim, cond_dim=action_dim + state_dim, device=device)
+
+    diffusion_model = Diffusion(
+        x_dim=state_dim,
+        cond_dim=action_dim + state_dim,
+        model=model,
+        device=device,
+        clip_denoised=False,
+    )
+
+    optimizer = torch.optim.Adam(diffusion_model.parameters(), lr=3e-4)
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    writer = SummaryWriter(f"runs/diffusion_{env_name}_{timestamp}")
+    epoch_number = 0
+
+    EPOCHS = 1
+
+    best_vloss = 1_000_000.0
+
+    for epoch in range(EPOCHS):
+        print("EPOCH {}:".format(epoch_number + 1))
+
+        # Make sure gradient tracking is on, and do a pass over the data
+        diffusion_model.train(True)
+
+        running_loss = 0.0
+        last_loss = 0.0
+
+        # Here, we use enumerate(training_loader) instead of
+        # iter(training_loader) so that we can track the batch
+        # index and do some intra-epoch reporting
+        for i, data in enumerate(tqdm(train_dataloader)):
+            # Every data instance is an input + label pair
+            states, actions, next_states, *_ = data
+
+            # Zero your gradients for every batch!
+            optimizer.zero_grad()
+
+            # Make predictions for this batch
+            cond = torch.cat((actions, states), dim=1)
+            diffusion_model.to(device)
+            outputs = diffusion_model(cond, verbose=False, return_diffusion=False)
+
+            # Compute the loss and its gradients
+            loss = diffusion_model.loss(next_states, cond)
+            loss.backward()
+
+            # Adjust learning weights
+            optimizer.step()
+
+            # Gather data and report
+            running_loss += loss.item()
+            if i % 1000 == 999:
+                last_loss = running_loss / 1000  # loss per batch
+                print("  batch {} loss: {}".format(i + 1, last_loss))
+                tb_x = epoch_number * len(train_dataloader) + i + 1
+                writer.add_scalar("Loss/train", last_loss, tb_x)
+                running_loss = 0.0
+
+        running_vloss = 0.0
+        # Set the model to evaluation mode, disabling dropout and using population
+        # statistics for batch normalization.
+        diffusion_model.eval()
+
+        # Disable gradient computation and reduce memory consumption.
+        with torch.no_grad():
+            for i, vdata in enumerate(test_dataloader):
+                vstates, vactions, vnext_states, *_ = vdata
+
+                vcond = torch.cat([vstates, vactions], dim=1)
+                voutputs = diffusion_model(vcond)
+                vloss = diffusion_model.loss(vnext_states, vcond)
+                running_vloss += vloss
+
+        avg_vloss = running_vloss / (i + 1)
+        print("LOSS train {} valid {}".format(last_loss, avg_vloss))
+
+        # Log the running loss averaged per batch
+        # for both training and validation
+        writer.add_scalars(
+            "Training vs. Validation Loss",
+            {"Training": last_loss, "Validation": avg_vloss},
+            epoch_number + 1,
+        )
+        writer.flush()
+
+        # Track best performance, and save the model's state
+        if avg_vloss < best_vloss:
+            best_vloss = avg_vloss
+            model_path = "model_{}_{}".format(timestamp, epoch_number)
+            torch.save(model.state_dict(), model_path)
+
+        epoch_number += 1
+
+
+if __name__ == "__main__":
+    main()
