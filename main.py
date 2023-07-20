@@ -1,3 +1,4 @@
+import copy
 from datetime import datetime
 import sys
 from pathlib import Path
@@ -13,6 +14,24 @@ from torch.utils.tensorboard import SummaryWriter
 
 from diffusion import Diffusion
 from model import MLP
+
+class EMA():
+    '''
+        empirical moving average
+    '''
+    def __init__(self, beta):
+        super().__init__()
+        self.beta = beta
+
+    def update_model_average(self, ma_model, current_model):
+        for current_params, ma_params in zip(current_model.parameters(), ma_model.parameters()):
+            old_weight, up_weight = ma_params.data, current_params.data
+            ma_params.data = self.update_average(old_weight, up_weight)
+
+    def update_average(self, old, new):
+        if old is None:
+            return new
+        return old * self.beta + (1 - self.beta) * new
 
 
 def iql_normalize(reward, not_done):
@@ -78,13 +97,18 @@ class D4RLDataset(Dataset):
 
 def split_dict(dict, n):
     keys = list(dict.keys())
-    train = {k: dict[k][n:] for k in keys}
+    train = {k: dict[k][:n] for k in keys}
     test = {k: dict[k][n:] for k in keys}
     return train, test
 
 
 def main():
-    device = "cpu"
+    update_ema_every = 10
+    step_start_ema = 1000
+    ema_decay = 0.995
+    ema_step = 0 
+
+    device = "cuda"
     # Initialize offline RL dataset
     env_name = "maze2d-umaze-v1"
     env = gym.make(env_name)
@@ -95,14 +119,14 @@ def main():
     state_dim = data["observations"].shape[1]
     action_dim = data["actions"].shape[1]
 
-    train_data, test_data = split_dict(data, int(0.8 * data_size))
+    train_data, test_data = split_dict(data, int(0.95 * data_size))
 
     train_dataset = D4RLDataset(train_data, device=device)
     test_dataset = D4RLDataset(test_data, device=device)
 
-    train_dataloader = DataLoader(train_dataset, batch_size=5000, shuffle=False)
+    train_dataloader = DataLoader(train_dataset, batch_size=10, shuffle=True)
 
-    test_dataloader = DataLoader(test_dataset, batch_size=5000, shuffle=False)
+    test_dataloader = DataLoader(test_dataset, batch_size=10, shuffle=False)
 
     model = MLP(x_dim=state_dim, cond_dim=action_dim + state_dim, device=device)
 
@@ -112,20 +136,21 @@ def main():
         model=model,
         device=device,
         clip_denoised=False,
-    )
+    ).to(device)
+
+    ema = EMA(ema_decay)
+    ema_model = copy.deepcopy(diffusion_model)
 
     optimizer = torch.optim.Adam(diffusion_model.parameters(), lr=3e-4)
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     writer = SummaryWriter(f"runs/diffusion_{env_name}_{timestamp}")
-    epoch_number = 0
 
     EPOCHS = 1
 
-    best_vloss = 1_000_000.0
 
     for epoch in range(EPOCHS):
-        print("EPOCH {}:".format(epoch_number + 1))
+        print("EPOCH {}:".format(epoch + 1))
 
         # Make sure gradient tracking is on, and do a pass over the data
         diffusion_model.train(True)
@@ -145,8 +170,7 @@ def main():
 
             # Make predictions for this batch
             cond = torch.cat((actions, states), dim=1)
-            diffusion_model.to(device)
-            outputs = diffusion_model(cond, verbose=False, return_diffusion=False)
+            # outputs = diffusion_model(cond, verbose=False, return_diffusion=False)
 
             # Compute the loss and its gradients
             loss = diffusion_model.loss(next_states, cond)
@@ -155,50 +179,38 @@ def main():
             # Adjust learning weights
             optimizer.step()
 
+            if ema_step % update_ema_every == 0:
+                if ema_step >= step_start_ema:
+                    ema.update_model_average(ema_model, diffusion_model)
+
             # Gather data and report
             running_loss += loss.item()
             if i % 1000 == 999:
                 last_loss = running_loss / 1000  # loss per batch
                 print("  batch {} loss: {}".format(i + 1, last_loss))
-                tb_x = epoch_number * len(train_dataloader) + i + 1
+                tb_x = epoch * len(train_dataloader) + i + 1
                 writer.add_scalar("Loss/train", last_loss, tb_x)
                 running_loss = 0.0
+            
+            ema_step += 1
 
-        running_vloss = 0.0
-        # Set the model to evaluation mode, disabling dropout and using population
-        # statistics for batch normalization.
-        diffusion_model.eval()
+    torch.save({"model": diffusion_model, "ema": ema_model}, f"model_{timestamp}")
 
-        # Disable gradient computation and reduce memory consumption.
-        with torch.no_grad():
-            for i, vdata in enumerate(test_dataloader):
-                vstates, vactions, vnext_states, *_ = vdata
+    torch.cuda.empty_cache()
 
-                vcond = torch.cat([vstates, vactions], dim=1)
-                voutputs = diffusion_model(vcond)
-                vloss = diffusion_model.loss(vnext_states, vcond)
-                running_vloss += vloss
+    val_loss = torch.nn.MSELoss()
+    ema_loss, model_loss = 0, 0
+    for i, vdata in enumerate(tqdm(test_dataloader)):
+        states, actions, next_states, *_ = vdata 
+        cond = torch.cat((actions, states), dim=1)
+        model_out = diffusion_model(cond)
+        ema_out = ema_model(cond)
+        model_loss += val_loss(next_states, model_out)
+        ema_loss += val_loss(next_states, ema_out)
 
-        avg_vloss = running_vloss / (i + 1)
-        print("LOSS train {} valid {}".format(last_loss, avg_vloss))
-
-        # Log the running loss averaged per batch
-        # for both training and validation
-        writer.add_scalars(
-            "Training vs. Validation Loss",
-            {"Training": last_loss, "Validation": avg_vloss},
-            epoch_number + 1,
-        )
-        writer.flush()
-
-        # Track best performance, and save the model's state
-        if avg_vloss < best_vloss:
-            best_vloss = avg_vloss
-            model_path = "model_{}_{}".format(timestamp, epoch_number)
-            torch.save(model.state_dict(), model_path)
-
-        epoch_number += 1
-
+    ema_loss /= (i + 1)
+    model_loss /= (i + 1)
+    print(f"Avg. Model Test Loss: {model_loss}\nAvg. EMA Test Loss: {ema_loss}")
 
 if __name__ == "__main__":
     main()
