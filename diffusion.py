@@ -137,7 +137,7 @@ class Diffusion(nn.Module):
 
     # @torch.no_grad()
     def p_sample(self, x, t, cond):
-        b, *_= *x.shape, x.device
+        b, *_, device = *x.shape, x.device
         model_mean, _, model_log_variance = self.p_mean_variance(x=x, t=t, cond=cond)
         noise = torch.randn_like(x)
         # no noise when t == 0
@@ -146,16 +146,17 @@ class Diffusion(nn.Module):
 
     # @torch.no_grad()
     def p_sample_loop(self, cond, shape, verbose=False, return_diffusion=False):
+        device = self.betas.device
 
         batch_size = shape[0]
-        x = torch.randn(shape)
+        x = torch.randn(shape, device=device)
 
         if return_diffusion:
             diffusion = [x]
 
         progress = Progress(self.n_timesteps) if verbose else Silent()
         for i in reversed(range(0, self.n_timesteps)):
-            timesteps = torch.full((batch_size,), i, dtype=torch.long)
+            timesteps = torch.full((batch_size,), i, device=device, dtype=torch.long)
             x = self.p_sample(x, timesteps, cond)
 
             progress.update({"t": i})
@@ -193,7 +194,6 @@ class Diffusion(nn.Module):
         return sample
 
     def p_losses(self, x_start, cond, t, weights=1.0):
-
         noise = torch.randn_like(x_start)
 
         x_noisy = self.q_sample(x_start=x_start, t=t, noise=noise)
@@ -211,7 +211,7 @@ class Diffusion(nn.Module):
 
     def loss(self, x, cond, weights=1.0):
         batch_size = len(x)
-        t = torch.randint(0, self.n_timesteps, (batch_size,)).long()
+        t = torch.randint(0, self.n_timesteps, (batch_size,), device=x.device).long()
         return self.p_losses(x, cond, t, weights)
 
     def forward(self, cond, *args, **kwargs):

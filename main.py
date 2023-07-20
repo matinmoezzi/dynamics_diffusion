@@ -15,16 +15,20 @@ from torch.utils.tensorboard import SummaryWriter
 from diffusion import Diffusion
 from model import MLP
 
-class EMA():
-    '''
-        empirical moving average
-    '''
+
+class EMA:
+    """
+    empirical moving average
+    """
+
     def __init__(self, beta):
         super().__init__()
         self.beta = beta
 
     def update_model_average(self, ma_model, current_model):
-        for current_params, ma_params in zip(current_model.parameters(), ma_model.parameters()):
+        for current_params, ma_params in zip(
+            current_model.parameters(), ma_model.parameters()
+        ):
             old_weight, up_weight = ma_params.data, current_params.data
             ma_params.data = self.update_average(old_weight, up_weight)
 
@@ -106,9 +110,9 @@ def main():
     update_ema_every = 10
     step_start_ema = 1000
     ema_decay = 0.995
-    ema_step = 0 
+    ema_step = 0
 
-    device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
     # Initialize offline RL dataset
     env_name = "maze2d-umaze-v1"
@@ -128,7 +132,7 @@ def main():
     train_dataloader = DataLoader(train_dataset, batch_size=10, shuffle=True)
 
     test_dataloader = DataLoader(test_dataset, batch_size=10, shuffle=False)
-    
+
     cond_dim = state_dim + action_dim
 
     model = MLP(x_dim=state_dim, cond_dim=cond_dim)
@@ -140,9 +144,11 @@ def main():
         clip_denoised=False,
     )
 
+    use_multi_gpus = False
     if torch.cuda.device_count() > 1:
         print("Let's use", torch.cuda.device_count(), "GPUs!")
         diffusion_model = torch.nn.DataParallel(diffusion_model)
+        use_multi_gpus = True
     diffusion_model.to(device)
 
     ema = EMA(ema_decay)
@@ -155,9 +161,7 @@ def main():
 
     EPOCHS = 1
 
-
     for epoch in range(EPOCHS):
-
         print("EPOCH {}:".format(epoch + 1))
 
         running_loss = 0.0
@@ -167,10 +171,13 @@ def main():
         # iter(training_loader) so that we can track the batch
         # index and do some intra-epoch reporting
         for i, data in enumerate(tqdm(train_dataloader)):
-
             # Every data instance is a batch of states, actions, next_states, rewards and dones
             states, actions, next_states, *_ = data
-            states, actions, next_states = states.to(device), actions.to(device), next_states.to(device)
+            states, actions, next_states = (
+                states.to(device),
+                actions.to(device),
+                next_states.to(device),
+            )
 
             # Zero your gradients for every batch!
             optimizer.zero_grad()
@@ -181,7 +188,10 @@ def main():
             # outputs = diffusion_model(cond, verbose=False, return_diffusion=False)
 
             # Compute the loss and its gradients
-            loss = diffusion_model.loss(next_states, cond)
+            if use_multi_gpus:
+                loss = diffusion_model.module.loss(next_states, cond)
+            else:
+                loss = diffusion_model.loss(next_states, cond)
             loss.backward()
 
             # Adjust learning weights
@@ -199,28 +209,32 @@ def main():
                 tb_x = epoch * len(train_dataloader) + i + 1
                 writer.add_scalar("Loss/train", last_loss, tb_x)
                 running_loss = 0.0
-            
+
             ema_step += 1
-    
+
     # End of training
     print("Finished Training.")
 
-    torch.save({"model": diffusion_model.state_dict(), "ema": ema_model.state_dict()}, f"model_{timestamp}")
+    torch.save(
+        {"model": diffusion_model.state_dict(), "ema": ema_model.state_dict()},
+        f"model_{timestamp}",
+    )
 
     # Validating the model using MSE loss
     val_loss = torch.nn.MSELoss()
     ema_loss, model_loss = 0, 0
     for i, vdata in enumerate(tqdm(test_dataloader)):
-        states, actions, next_states, *_ = vdata 
+        states, actions, next_states, *_ = vdata
         cond = torch.cat((actions, states), dim=1)
         model_out = diffusion_model(cond)
         ema_out = ema_model(cond)
         model_loss += val_loss(next_states, model_out)
         ema_loss += val_loss(next_states, ema_out)
 
-    ema_loss /= (i + 1)
-    model_loss /= (i + 1)
+    ema_loss /= i + 1
+    model_loss /= i + 1
     print(f"Avg. Model Test Loss: {model_loss}\nAvg. EMA Test Loss: {ema_loss}")
+
 
 if __name__ == "__main__":
     main()
