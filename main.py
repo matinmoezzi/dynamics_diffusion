@@ -106,32 +106,14 @@ def split_dict(dict, n):
     return train, test
 
 
-def main():
+def train(train_dataset, state_dim, action_dim, save_path, device):
     update_ema_every = 10
     step_start_ema = 1000
     ema_decay = 0.995
     ema_step = 0
 
-    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-
     # Initialize offline RL dataset
-    env_name = "maze2d-umaze-v1"
-    env = gym.make(env_name)
-    env.reset()
-    data = d4rl.qlearning_dataset(env)
-
-    data_size = data["observations"].shape[0]
-    state_dim = data["observations"].shape[1]
-    action_dim = data["actions"].shape[1]
-
-    train_data, test_data = split_dict(data, int(0.95 * data_size))
-
-    train_dataset = D4RLDataset(train_data)
-    test_dataset = D4RLDataset(test_data)
-
     train_dataloader = DataLoader(train_dataset, batch_size=10, shuffle=True)
-
-    test_dataloader = DataLoader(test_dataset, batch_size=10, shuffle=False)
 
     cond_dim = state_dim + action_dim
 
@@ -156,8 +138,7 @@ def main():
 
     optimizer = torch.optim.Adam(diffusion_model.parameters(), lr=3e-4)
 
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    writer = SummaryWriter(f"runs/diffusion_{env_name}_{timestamp}")
+    writer = SummaryWriter(f"runs/{save_path}")
 
     EPOCHS = 1
 
@@ -204,7 +185,7 @@ def main():
             # Gather data and report
             running_loss += loss.item()
             if i % 1000 == 999:
-                last_loss = running_loss / 1000  # loss per batch
+                last_loss = running_loss / 1000  # loss per mini-batch
                 print("  batch {} loss: {}".format(i + 1, last_loss))
                 tb_x = epoch * len(train_dataloader) + i + 1
                 writer.add_scalar("Loss/train", last_loss, tb_x)
@@ -217,23 +198,94 @@ def main():
 
     torch.save(
         {"model": diffusion_model.state_dict(), "ema": ema_model.state_dict()},
-        f"model_{timestamp}",
+        save_path,
     )
+    print("Model saved.")
+
+
+def test(test_dataset, state_dim, action_dim, load_path, device):
+    test_dataloader = DataLoader(test_dataset, batch_size=10, shuffle=False)
+    cond_dim = state_dim + action_dim
+
+    model = MLP(state_dim, cond_dim)
+    diffusion_model = Diffusion(state_dim, cond_dim, model, clip_denoised=False)
+
+    use_multi_gpus = False
+    if torch.cuda.device_count() > 1:
+        print("Let's use", torch.cuda.device_count(), "GPUs!")
+        diffusion_model = torch.nn.DataParallel(diffusion_model)
+        use_multi_gpus = True
+    diffusion_model.to(device)
+
+    ema_model = copy.deepcopy(diffusion_model)
+
+    load_model = torch.load(load_path)
+    diff_state_dict, ema_state_dict = load_model["model"], load_model["ema"]
+
+    diffusion_model.load_state_dict(diff_state_dict)
+    ema_model.load_state_dict(ema_state_dict)
 
     # Validating the model using MSE loss
     val_loss = torch.nn.MSELoss()
     ema_loss, model_loss = 0, 0
     for i, vdata in enumerate(tqdm(test_dataloader)):
         states, actions, next_states, *_ = vdata
-        cond = torch.cat((actions, states), dim=1)
-        model_out = diffusion_model(cond)
-        ema_out = ema_model(cond)
-        model_loss += val_loss(next_states, model_out)
-        ema_loss += val_loss(next_states, ema_out)
+        states, actions, next_states = (
+            states.to(device),
+            actions.to(device),
+            next_states.to(device),
+        )
 
-    ema_loss /= i + 1
-    model_loss /= i + 1
-    print(f"Avg. Model Test Loss: {model_loss}\nAvg. EMA Test Loss: {ema_loss}")
+        cond = torch.cat((actions, states), dim=1)
+
+        model_out = diffusion_model(cond)
+
+        ema_out = ema_model(cond)
+
+        model_loss += val_loss(next_states, model_out).item()
+
+        ema_loss += val_loss(next_states, ema_out).item()
+
+        if i % 100 == 99:
+            last_model_loss = model_loss / 100  # loss per mini-batch
+            last_ema_loss = ema_loss / 100  # loss per mini-batch
+            print(
+                "  batch {} model-loss: {} ema-loss: {}".format(
+                    i + 1, last_model_loss, last_ema_loss
+                )
+            )
+            ema_loss, model_loss = 0.0, 0.0
+
+    print(
+        f"Avg. Model Test Loss: {last_model_loss}\nAvg. EMA Test Loss: {last_ema_loss}"
+    )
+
+
+def main():
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+
+    env_name = "maze2d-umaze-v1"
+    env = gym.make(env_name)
+    env.reset()
+    data = d4rl.qlearning_dataset(env)
+
+    data_size = data["observations"].shape[0]
+    state_dim = data["observations"].shape[1]
+    action_dim = data["actions"].shape[1]
+
+    train_data, test_data = split_dict(data, int(0.99 * data_size))
+
+    train_dataset = D4RLDataset(train_data)
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    save_path = f"diffusion_{env_name}_{timestamp}"
+
+    # train(train_dataset, state_dim, action_dim, save_path, device)
+
+    test_dataset = D4RLDataset(test_data)
+
+    test(test_dataset, state_dim, action_dim, "model_20230720_151016", device)
+    # test(test_dataset, state_dim, action_dim, save_path)
 
 
 if __name__ == "__main__":
