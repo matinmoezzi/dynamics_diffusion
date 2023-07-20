@@ -31,11 +31,8 @@ class Diffusion(nn.Module):
         clip_denoised=True,
         predict_epsilon=True,
         max_x=None,
-        device="cpu",
     ):
         super(Diffusion, self).__init__()
-
-        self.device = device
 
         self.x_dim = x_dim
         self.cond_dim = cond_dim
@@ -52,11 +49,6 @@ class Diffusion(nn.Module):
         alphas = 1.0 - betas
         alphas_cumprod = torch.cumprod(alphas, axis=0)
         alphas_cumprod_prev = torch.cat([torch.ones(1), alphas_cumprod[:-1]])
-
-        alphas = alphas.to(self.device)
-        betas = betas.to(self.device)
-        alphas_cumprod = alphas_cumprod.to(self.device)
-        alphas_cumprod_prev = alphas_cumprod_prev.to(self.device)
 
         self.n_timesteps = int(n_timesteps)
         self.clip_denoised = clip_denoised
@@ -145,7 +137,7 @@ class Diffusion(nn.Module):
 
     # @torch.no_grad()
     def p_sample(self, x, t, cond):
-        b, *_, device = *x.shape, x.device
+        b, *_= *x.shape, x.device
         model_mean, _, model_log_variance = self.p_mean_variance(x=x, t=t, cond=cond)
         noise = torch.randn_like(x)
         # no noise when t == 0
@@ -154,17 +146,16 @@ class Diffusion(nn.Module):
 
     # @torch.no_grad()
     def p_sample_loop(self, cond, shape, verbose=False, return_diffusion=False):
-        device = self.betas.device
 
         batch_size = shape[0]
-        x = torch.randn(shape, device=device)
+        x = torch.randn(shape)
 
         if return_diffusion:
             diffusion = [x]
 
         progress = Progress(self.n_timesteps) if verbose else Silent()
         for i in reversed(range(0, self.n_timesteps)):
-            timesteps = torch.full((batch_size,), i, device=device, dtype=torch.long)
+            timesteps = torch.full((batch_size,), i, dtype=torch.long)
             x = self.p_sample(x, timesteps, cond)
 
             progress.update({"t": i})
@@ -202,9 +193,8 @@ class Diffusion(nn.Module):
         return sample
 
     def p_losses(self, x_start, cond, t, weights=1.0):
-        device = cond.device
 
-        noise = torch.randn_like(x_start, device=device)
+        noise = torch.randn_like(x_start)
 
         x_noisy = self.q_sample(x_start=x_start, t=t, noise=noise)
 
@@ -221,7 +211,7 @@ class Diffusion(nn.Module):
 
     def loss(self, x, cond, weights=1.0):
         batch_size = len(x)
-        t = torch.randint(0, self.n_timesteps, (batch_size,), device=x.device).long()
+        t = torch.randint(0, self.n_timesteps, (batch_size,)).long()
         return self.p_losses(x, cond, t, weights)
 
     def forward(self, cond, *args, **kwargs):

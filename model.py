@@ -14,9 +14,8 @@ class MLP(nn.Module):
     MLP Model
     """
 
-    def __init__(self, x_dim, cond_dim, device, t_dim=16):
+    def __init__(self, x_dim, cond_dim, t_dim=16):
         super(MLP, self).__init__()
-        self.device = device
 
         self.time_mlp = nn.Sequential(
             SinusoidalPosEmb(t_dim),

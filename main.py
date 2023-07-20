@@ -108,7 +108,8 @@ def main():
     ema_decay = 0.995
     ema_step = 0 
 
-    device = "cuda"
+    device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+
     # Initialize offline RL dataset
     env_name = "maze2d-umaze-v1"
     env = gym.make(env_name)
@@ -121,22 +122,28 @@ def main():
 
     train_data, test_data = split_dict(data, int(0.95 * data_size))
 
-    train_dataset = D4RLDataset(train_data, device=device)
-    test_dataset = D4RLDataset(test_data, device=device)
+    train_dataset = D4RLDataset(train_data)
+    test_dataset = D4RLDataset(test_data)
 
     train_dataloader = DataLoader(train_dataset, batch_size=10, shuffle=True)
 
     test_dataloader = DataLoader(test_dataset, batch_size=10, shuffle=False)
+    
+    cond_dim = state_dim + action_dim
 
-    model = MLP(x_dim=state_dim, cond_dim=action_dim + state_dim, device=device)
+    model = MLP(x_dim=state_dim, cond_dim=cond_dim)
 
     diffusion_model = Diffusion(
         x_dim=state_dim,
-        cond_dim=action_dim + state_dim,
+        cond_dim=cond_dim,
         model=model,
-        device=device,
         clip_denoised=False,
-    ).to(device)
+    )
+
+    if torch.cuda.device_count() > 1:
+        print("Let's use", torch.cuda.device_count(), "GPUs!")
+        diffusion_model = torch.nn.DataParallel(diffusion_model)
+    diffusion_model.to(device)
 
     ema = EMA(ema_decay)
     ema_model = copy.deepcopy(diffusion_model)
@@ -150,10 +157,8 @@ def main():
 
 
     for epoch in range(EPOCHS):
-        print("EPOCH {}:".format(epoch + 1))
 
-        # Make sure gradient tracking is on, and do a pass over the data
-        diffusion_model.train(True)
+        print("EPOCH {}:".format(epoch + 1))
 
         running_loss = 0.0
         last_loss = 0.0
@@ -162,14 +167,17 @@ def main():
         # iter(training_loader) so that we can track the batch
         # index and do some intra-epoch reporting
         for i, data in enumerate(tqdm(train_dataloader)):
-            # Every data instance is an input + label pair
+
+            # Every data instance is a batch of states, actions, next_states, rewards and dones
             states, actions, next_states, *_ = data
+            states, actions, next_states = states.to(device), actions.to(device), next_states.to(device)
 
             # Zero your gradients for every batch!
             optimizer.zero_grad()
 
-            # Make predictions for this batch
             cond = torch.cat((actions, states), dim=1)
+
+            # Make predictions for this batch
             # outputs = diffusion_model(cond, verbose=False, return_diffusion=False)
 
             # Compute the loss and its gradients
@@ -193,11 +201,13 @@ def main():
                 running_loss = 0.0
             
             ema_step += 1
+    
+    # End of training
+    print("Finished Training.")
 
-    torch.save({"model": diffusion_model, "ema": ema_model}, f"model_{timestamp}")
+    torch.save({"model": diffusion_model.state_dict(), "ema": ema_model.state_dict()}, f"model_{timestamp}")
 
-    torch.cuda.empty_cache()
-
+    # Validating the model using MSE loss
     val_loss = torch.nn.MSELoss()
     ema_loss, model_loss = 0, 0
     for i, vdata in enumerate(tqdm(test_dataloader)):
