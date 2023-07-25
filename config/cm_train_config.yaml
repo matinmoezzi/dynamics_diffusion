@@ -1,0 +1,31 @@
+defaults:
+  - _self_
+  - model/MLP
+  - env/maze2d-umaze
+  - diffusion/karras_diffusion
+
+teacher_model_path: ""
+teacher_dropout: 0.1
+training_mode: "consistency_distillation"
+target_ema_mode: "fixed"
+scale_mode: "fixed"
+total_training_steps: 600000
+start_ema: 0.0
+start_scales: 40
+end_scales: 40
+distill_steps_per_iter: 50000
+loss_norm: "lpips"
+
+schedule_sampler: "uniform"
+lr: 1e-4
+weight_decay: 0.0
+lr_anneal_steps: 0
+global_batch_size: 2048
+batch_size: -1
+microbatch: -1  # -1 disables microbatches
+ema_rate: "0.9999"  # comma-separated list of EMA values
+log_interval: 10
+save_interval: 10000
+resume_checkpoint: ""
+use_fp16: False
+fp16_scale_growth: 1e-3

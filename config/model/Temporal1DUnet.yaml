@@ -1,0 +1,2 @@
+name: Temporal1DUnet
+_target_: guided_diffusion.models.Temporal1DUnet

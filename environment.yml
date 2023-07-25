@@ -1,4 +1,4 @@
-name: d4rl
+name: dynamics-diffusion
 channels:
   - pytorch
   - conda-forge
@@ -192,4 +192,3 @@ dependencies:
       - transformers==4.30.2
       - tzdata==2023.3
       - urllib3==2.0.3
-prefix: /Users/matin/miniconda3/envs/d4rl

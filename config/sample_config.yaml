@@ -1,0 +1,11 @@
+defaults:
+  - _self_
+  - model/MLP
+  - env/maze2d-umaze
+  - diffusion/gaussian_diffusion
+clip_denoised: False
+num_samples: 100
+batch_size: 16
+use_ddim: True
+use_fp16: False
+model_path: ""
