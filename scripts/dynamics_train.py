@@ -20,11 +20,18 @@ def main(cfg: DictConfig):
     logger.configure(dir=log_dir, format_strs=["stdout", "torch-tensorboard"])
 
     logger.log("creating data loader...")
-    data, info = get_d4rl_dataset(cfg.env.name, cfg.batch_size)
+    data, info = get_d4rl_dataset(
+        cfg.env.name, cfg.batch_size, cfg.env.deterministic_loader, cfg.env.reward_tune
+    )
 
     state_dim = info["state_dim"]
     action_dim = info["action_dim"]
     cond_dim = state_dim + action_dim
+
+    if cfg.training_iter == -1:
+        training_iter = int(info["size"])
+    else:
+        training_iter = int(min(cfg.training_iter, info["size"]))
 
     logger.log("creating model and diffusion...")
     diffusion = hydra.utils.call(cfg.diffusion)
@@ -37,7 +44,7 @@ def main(cfg: DictConfig):
         model=model,
         diffusion=diffusion,
         data=data,
-        training_iter=int(cfg.training_iter),
+        training_iter=training_iter,
         batch_size=cfg.batch_size,
         microbatch=cfg.microbatch,
         lr=cfg.lr,

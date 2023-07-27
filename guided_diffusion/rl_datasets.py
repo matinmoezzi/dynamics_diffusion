@@ -34,12 +34,18 @@ def get_env(env_name) -> gym.Env:
     return env
 
 
-def get_d4rl_dataset(env_name, batch_size):
+def get_d4rl_dataset(env_name, batch_size, deterministic=False, reward_tune=None):
     env = get_env(env_name)
     data = d4rl.qlearning_dataset(env)
-    return d4rl_load_data(data=data, batch_size=batch_size), {
+    return d4rl_load_data(
+        data=data,
+        batch_size=batch_size,
+        deterministic=deterministic,
+        reward_tune=reward_tune,
+    ), {
         "state_dim": data["observations"].shape[1],
         "action_dim": data["actions"].shape[1],
+        "size": data["observations"].shape[0],
     }
 
 

@@ -3,7 +3,7 @@ defaults:
   - model/MLP
   - env/maze2d-umaze
   - diffusion/gaussian_diffusion
-training_iter: 1e5
+training_iter: -1
 schedule_sampler: "uniform"
 lr: 1e-4
 weight_decay: 0.0

@@ -51,7 +51,6 @@ class TrainLoop:
         self.model = model
         self.diffusion = diffusion
         self.data = data
-        self.training_iter = training_iter
         self.batch_size = batch_size
         self.microbatch = microbatch if microbatch > 0 else batch_size
         self.lr = lr
@@ -68,6 +67,7 @@ class TrainLoop:
         self.schedule_sampler = schedule_sampler or UniformSampler(diffusion)
         self.weight_decay = weight_decay
         self.lr_anneal_steps = lr_anneal_steps
+        self.training_iter = training_iter
 
         self.step = 0
         self.resume_step = 0
