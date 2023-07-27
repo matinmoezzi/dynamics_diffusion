@@ -98,13 +98,14 @@ def main(cfg: DictConfig):
     logger.log(f"{cfg.num_samples} sampled in {end - start:.4f} sec")
 
     if dist.get_rank() == 0:
+        out_dir = os.path.join(
+            Path().resolve(), "samples", f"{cfg.env.name}_{cfg.num_samples}"
+        )
         out_path = os.path.join(
-            Path().resolve(),
-            "Samples",
-            f"{cfg.env.name}_{cfg.num_samples}",
-            f"{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.npz",
+            out_dir, f"{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.npz"
         )
         logger.log(f"saving to {out_path}")
+        os.makedirs(out_dir, exist_ok=True)
         np.savez(
             out_path,
             states=states_arr,

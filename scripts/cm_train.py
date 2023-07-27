@@ -93,7 +93,7 @@ def main(cfg: DictConfig):
 
     logger.log("creating the target model")
     target_model = hydra.utils.instantiate(
-        cfg.model, state_dim=state_dim, cond_dim=cond_dim
+        cfg.model, x_dim=state_dim, cond_dim=cond_dim
     )
 
     target_model.to(dist_util.dev())

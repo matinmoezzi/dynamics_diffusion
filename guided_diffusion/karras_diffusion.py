@@ -8,7 +8,6 @@ import torch as th
 import torch.nn as nn
 import torch.nn.functional as F
 from piq import LPIPS
-from torchvision.transforms import RandomCrop
 from . import dist_util
 
 from .nn import mean_flat, append_dims, append_zero
@@ -40,7 +39,7 @@ class KarrasDenoiser:
         rho=7.0,
         weight_schedule="karras",
         distillation=False,
-        loss_norm="lpips",
+        loss_norm="l2",
     ):
         self.sigma_data = sigma_data
         self.sigma_max = sigma_max

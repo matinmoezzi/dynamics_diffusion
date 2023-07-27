@@ -329,6 +329,7 @@ class CMTrainLoop(TrainLoop):
         total_training_steps,
         **kwargs,
     ):
+        kwargs["training_iter"] = total_training_steps
         super().__init__(**kwargs)
         self.training_mode = training_mode
         self.ema_scale_fn = ema_scale_fn
