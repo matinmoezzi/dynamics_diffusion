@@ -58,7 +58,12 @@ def d4rl_load_data(*, data, batch_size, deterministic=False, reward_tune=None):
     :param deterministic: if True, yield results in a deterministic order.
     :param reward_tune: reward tuning type
     """
-    dataset = D4RLDataset(data, reward_tune)
+    dataset = D4RLDataset(
+        data,
+        reward_tune,
+        shard=MPI.COMM_WORLD.Get_rank(),
+        num_shards=MPI.COMM_WORLD.Get_size(),
+    )
     if deterministic:
         loader = DataLoader(
             dataset, batch_size=batch_size, shuffle=False, num_workers=1, drop_last=True
@@ -71,17 +76,29 @@ def d4rl_load_data(*, data, batch_size, deterministic=False, reward_tune=None):
         yield from loader
 
 
-# TODO: shard -> MPI.Get_rank() Get_size()
 class D4RLDataset(Dataset):
-    def __init__(self, data, reward_tune):
+    def __init__(self, data, reward_tune, shard=0, num_shards=1):
         self.data = data
 
-        self.state = torch.from_numpy(self.data["observations"]).float()
-        self.action = torch.from_numpy(self.data["actions"]).float()
-        self.next_state = torch.from_numpy(self.data["next_observations"]).float()
-        reward = torch.from_numpy(self.data["rewards"]).view(-1, 1).float()
+        self.state = torch.from_numpy(
+            self.data["observations"][shard:][::num_shards]
+        ).float()
+        self.action = torch.from_numpy(
+            self.data["actions"][shard:][::num_shards]
+        ).float()
+        self.next_state = torch.from_numpy(
+            self.data["next_observations"][shard:][::num_shards]
+        ).float()
+        reward = (
+            torch.from_numpy(self.data["rewards"][shard:][::num_shards])
+            .view(-1, 1)
+            .float()
+        )
         self.not_done = (
-            1.0 - torch.from_numpy(self.data["terminals"]).view(-1, 1).float()
+            1.0
+            - torch.from_numpy(self.data["terminals"][shard:][::num_shards])
+            .view(-1, 1)
+            .float()
         )
 
         self.len = self.state.shape[0]
