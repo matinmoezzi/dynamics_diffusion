@@ -51,7 +51,7 @@ def main(cfg: DictConfig):
         raise ValueError(f"unknown training mode {cfg.training_mode}")
 
     diffusion = hydra.utils.instantiate(cfg.diffusion, distillation=distillation)
-    model = hydra.utils.instantiate(cfg.model, state_dim, cond_dim)
+    model = hydra.utils.instantiate(cfg.model, x_dim=state_dim, cond_dim=cond_dim)
 
     model.to(dist_util.dev())
     model.train()
@@ -106,7 +106,10 @@ def main(cfg: DictConfig):
         dst.data.copy_(src.data)
 
     if cfg.use_fp16:
-        target_model.convert_to_fp16()
+        if hasattr(target_model, "convert_to_fp16"):
+            target_model.convert_to_fp16()
+        else:
+            target_model = target_model.half()
 
     logger.log("training...")
     CMTrainLoop(
