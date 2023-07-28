@@ -346,9 +346,12 @@ class CMTrainLoop(TrainLoop):
             self.target_model_param_groups_and_shapes = get_param_groups_and_shapes(
                 self.target_model.named_parameters()
             )
-            self.target_model_master_params = make_master_params(
-                self.target_model_param_groups_and_shapes
-            )
+            if self.use_fp16:
+                self.target_model_master_params = make_master_params(
+                    self.target_model_param_groups_and_shapes
+                )
+            else:
+                self.target_model_master_params = list(self.target_model.parameters())
 
         if teacher_model:
             self._load_and_sync_teacher_parameters()

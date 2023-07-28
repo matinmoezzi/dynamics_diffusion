@@ -67,7 +67,7 @@ def main(cfg: DictConfig):
         )
         teacher_model = hydra.utils.instantiate(
             cfg.model,
-            state_dim=state_dim,
+            x_dim=state_dim,
             cond_dim=cond_dim,
             dropout=cfg.teacher_dropout,
         )

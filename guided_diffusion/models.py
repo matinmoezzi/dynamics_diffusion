@@ -53,3 +53,6 @@ class MLP(nn.Module):
         x = self.mid_layer(x)
 
         return self.final_layer(x)
+
+    def convert_to_fp16(self):
+        pass
