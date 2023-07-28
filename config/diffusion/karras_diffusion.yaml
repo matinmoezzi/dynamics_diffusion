@@ -1,4 +1,4 @@
-_target_: guided_diffusion.karras_diffusion.KarrasDenoiser
+_target_: dynamics_diffusion.karras_diffusion.KarrasDenoiser
 sigma_min: 0.002
 sigma_max: 80.0
 sigma_data: 0.5

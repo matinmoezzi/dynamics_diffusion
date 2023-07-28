@@ -4,11 +4,11 @@ from pathlib import Path
 import hydra
 from omegaconf import DictConfig
 
-from guided_diffusion import dist_util, logger
-from guided_diffusion.rl_datasets import get_d4rl_dataset
-from guided_diffusion.resample import create_named_schedule_sampler
-from guided_diffusion.script_util import create_ema_and_scales_fn
-from guided_diffusion.train_util import CMTrainLoop, TrainLoop
+from dynamics_diffusion import dist_util, logger
+from dynamics_diffusion.rl_datasets import get_d4rl_dataset
+from dynamics_diffusion.resample import create_named_schedule_sampler
+from dynamics_diffusion.script_util import create_ema_and_scales_fn
+from dynamics_diffusion.train_util import CMTrainLoop, TrainLoop
 
 
 @hydra.main(version_base=None, config_path="../config", config_name="cm_train_config")

@@ -1,1 +1,1 @@
-_target_: guided_diffusion.models.MLP
+_target_: dynamics_diffusion.models.MLP

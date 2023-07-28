@@ -1,4 +1,4 @@
-_target_: guided_diffusion.script_util.create_gaussian_diffusion 
+_target_: dynamics_diffusion.script_util.create_gaussian_diffusion 
 learn_sigma: False
 steps: 1000
 noise_schedule: "linear"

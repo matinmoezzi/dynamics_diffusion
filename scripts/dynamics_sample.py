@@ -10,8 +10,8 @@ import torch as th
 import torch.distributed as dist
 from tqdm import trange
 
-from guided_diffusion import dist_util, logger
-from guided_diffusion.rl_datasets import get_env
+from dynamics_diffusion import dist_util, logger
+from dynamics_diffusion.rl_datasets import get_env
 
 
 def random_rollout(env: gym.Env, num_steps):
