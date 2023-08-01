@@ -16,3 +16,6 @@ save_interval: 10000
 resume_checkpoint: ""
 use_fp16: False
 fp16_scale_growth: 1e-3
+hydra:
+  run:
+    dir: ./logs/${env.name}/${diffusion.name}/${model.name}/${now:%Y%m%d-%H%M%S}

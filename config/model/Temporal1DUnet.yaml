@@ -1,2 +1,3 @@
 name: Temporal1DUnet
-_target_: dynamics_diffusion.models.Temporal1DUnet
+target:
+  _target_: dynamics_diffusion.models.Temporal1DUnet

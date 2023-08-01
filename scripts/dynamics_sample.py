@@ -1,9 +1,11 @@
 import datetime
 import os
 from pathlib import Path
+import pathlib
 import time
 import gym
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
+from hydra.core.hydra_config import HydraConfig
 import hydra
 import numpy as np
 import torch as th
@@ -32,25 +34,38 @@ def random_rollout(env: gym.Env, num_steps):
 
 @hydra.main(version_base=None, config_path="../config", config_name="sample_config")
 def main(cfg: DictConfig):
-    log_dir = f'{Path().resolve()}/logs/test/{cfg.env.name}_{datetime.datetime.now().strftime("%Y-%m-%d-%H-%M-%S-%f")}'
-    dist_util.setup_dist()
-    logger.configure(dir=log_dir, format_strs=["stdout"])
+    assert Path(cfg.model_dir, ".hydra").is_dir(), "Hydra configuration not found."
 
-    env = get_env(cfg.env.name)
+    model_prefix = "ema" if cfg.use_ema else "model"
+
+    list_models = list(pathlib.Path(cfg.model_dir, "train").glob(f"{model_prefix}*.pt"))
+    assert list_models, f"No {model_prefix} found."
+
+    model_path = max(list_models, key=os.path.getctime)
+
+    train_cfg = OmegaConf.load(Path(cfg.model_dir, ".hydra", "config.yaml"))
+
+    dist_util.setup_dist()
+    log_dir = Path(HydraConfig.get().run.dir).resolve()
+    logger.configure(dir=str(log_dir), format_strs=["stdout"])
+
+    env = get_env(train_cfg.env.name)
     state_dim = env.observation_space.shape[0]
     action_dim = env.action_space.shape[0]
     cond_dim = state_dim + action_dim
 
     logger.log("creating model and diffusion...")
-    diffusion = hydra.utils.call(cfg.diffusion)
-    model = hydra.utils.instantiate(cfg.model, state_dim, cond_dim)
-    model.load_state_dict(dist_util.load_state_dict(cfg.model_path, map_location="cpu"))
+    diffusion = hydra.utils.call(train_cfg.diffusion.target)
+    model = hydra.utils.instantiate(train_cfg.model.target, state_dim, cond_dim)
+    model.load_state_dict(
+        dist_util.load_state_dict(str(model_path), map_location="cpu")
+    )
     model.to(dist_util.dev())
     if cfg.use_fp16:
         model.convert_to_fp16()
     model.eval()
 
-    logger.log(f"sampling {cfg.env.name}...")
+    logger.log(f"sampling {train_cfg.env.name}...")
 
     all_samples = []
     all_states = []
@@ -98,14 +113,8 @@ def main(cfg: DictConfig):
     logger.log(f"{cfg.num_samples} sampled in {end - start:.4f} sec")
 
     if dist.get_rank() == 0:
-        out_dir = os.path.join(
-            Path().resolve(), "samples", f"{cfg.env.name}_{cfg.num_samples}"
-        )
-        out_path = os.path.join(
-            out_dir, f"{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.npz"
-        )
+        out_path = Path(log_dir, f"{cfg.num_samples}samples.npz")
         logger.log(f"saving to {out_path}")
-        os.makedirs(out_dir, exist_ok=True)
         np.savez(
             out_path,
             states=states_arr,

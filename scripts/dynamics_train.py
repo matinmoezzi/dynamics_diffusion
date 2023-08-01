@@ -2,9 +2,9 @@
 Train a diffusion model on dynamics model.
 """
 
-import datetime
 from omegaconf import DictConfig
 import hydra
+from hydra.core.hydra_config import HydraConfig
 from pathlib import Path
 
 from dynamics_diffusion import dist_util, logger
@@ -15,9 +15,9 @@ from dynamics_diffusion.train_util import TrainLoop
 
 @hydra.main(version_base=None, config_path="../config", config_name="train_config")
 def main(cfg: DictConfig):
-    log_dir = f'{Path().resolve()}/logs/train/{cfg.env.name}_{datetime.datetime.now().strftime("%Y-%m-%d-%H-%M-%S-%f")}'
+    log_dir = Path(HydraConfig.get().run.dir, "train").resolve()
     dist_util.setup_dist()
-    logger.configure(dir=log_dir, format_strs=["stdout", "torch-tensorboard"])
+    logger.configure(dir=str(log_dir), format_strs=["stdout", "torch-tensorboard"])
 
     logger.log("creating data loader...")
     data, info = get_d4rl_dataset(
@@ -34,8 +34,8 @@ def main(cfg: DictConfig):
         training_iter = int(min(cfg.training_iter, info["size"]))
 
     logger.log("creating model and diffusion...")
-    diffusion = hydra.utils.call(cfg.diffusion)
-    model = hydra.utils.instantiate(cfg.model, state_dim, cond_dim)
+    diffusion = hydra.utils.call(cfg.diffusion.target)
+    model = hydra.utils.instantiate(cfg.model.target, state_dim, cond_dim)
     model.to(dist_util.dev())
     schedule_sampler = create_named_schedule_sampler(cfg.schedule_sampler, diffusion)
 
