@@ -1,15 +1,17 @@
+import os
 import pathlib
 import gym
 import numpy as np
 import argparse
 from dynamics_diffusion import env
+from omegaconf import OmegaConf
 
 
 def main():
     parser = argparse.ArgumentParser(prog="visualize_samples")
     parser.add_argument(
         "-i",
-        "--samples_path",
+        "--samples_dir",
         action="store",
         type=str,
         required=True,
@@ -17,14 +19,29 @@ def main():
     )
     args = parser.parse_args()
 
-    samples = np.load(args.samples_path)
+    assert pathlib.Path(
+        args.samples_dir, ".hydra"
+    ).is_dir(), "Hydra configuration not found."
+
+    cfg = OmegaConf.load(pathlib.Path(args.samples_dir, ".hydra", "config.yaml"))
+    train_cfg = OmegaConf.load(pathlib.Path(cfg.model_dir, ".hydra", "config.yaml"))
+
+    list_samples = list(pathlib.Path(args.samples_dir).glob("*.npz"))
+    assert list_samples, f"No samples (.npz) found."
+
+    samples_path = max(list_samples, key=os.path.getctime)
+
+    samples = np.load(samples_path)
     states = samples["states"]
-    actions = samples["actions"]
     true_next_states = samples["true_next_states"]
     sampled_next_states = samples["sampled_next_states"]
 
-    env_name = pathlib.Path(args.samples_path).parent.name.split("_")[0]
-    env = gym.make("eval-" + env_name)
+    print(f"{len(states)} samples loaded from {samples_path}.")
+
+    mse = ((sampled_next_states - true_next_states) ** 2).mean(axis=0)
+    print(f"MSE loss: {mse}")
+
+    env = gym.make("eval-" + train_cfg.env.name)
     env.reset()
 
     qpos = np.concatenate((states[0][:2], states[0][:2]))

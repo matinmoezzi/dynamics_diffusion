@@ -11,9 +11,18 @@ import numpy as np
 import torch as th
 import torch.distributed as dist
 from tqdm import trange
+import yaml
 
 from dynamics_diffusion import dist_util, logger
 from dynamics_diffusion.rl_datasets import get_env
+
+
+def load_yaml_file(file_path: str):
+    with open(file_path, "r") as f:
+        return yaml.safe_load(f)
+
+
+OmegaConf.register_new_resolver("load_yaml", load_yaml_file)
 
 
 def random_rollout(env: gym.Env, num_steps):
