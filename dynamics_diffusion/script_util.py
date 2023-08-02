@@ -2,7 +2,22 @@ import argparse
 import numpy as np
 from . import gaussian_diffusion as gd
 from .respace import SpacedDiffusion, space_timesteps
-from .unet import UNetModel
+
+
+def random_rollout(env, num_steps):
+    trajectory = {"states": [], "actions": [], "next_states": []}
+    obs = env.reset()
+    for i in range(num_steps):
+        action = env.action_space.sample()
+        next_obs, reward, done, info = env.step(action)
+        trajectory["states"].append(obs)
+        trajectory["actions"].append(action)
+        trajectory["next_states"].append(next_obs)
+        if done:
+            obs = env.reset()
+        else:
+            obs = next_obs
+    return trajectory
 
 
 def create_gaussian_diffusion(

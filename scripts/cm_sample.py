@@ -1,36 +1,29 @@
+import torch.distributed as dist
 import os
 from pathlib import Path
-import pathlib
 import time
-from omegaconf import DictConfig, OmegaConf
-from hydra.core.hydra_config import HydraConfig
 import hydra
+
 import numpy as np
+from omegaconf import OmegaConf, DictConfig
 import torch as th
-import torch.distributed as dist
+from hydra.core.hydra_config import HydraConfig
 from tqdm import trange
-import yaml
 
 from dynamics_diffusion import dist_util, logger
 from dynamics_diffusion.rl_datasets import get_env
 from dynamics_diffusion.script_util import random_rollout
+from dynamics_diffusion.random_util import get_generator
+from dynamics_diffusion.karras_diffusion import karras_sample
 
 
-def load_yaml_file(file_path: str):
-    with open(file_path, "r") as f:
-        return yaml.safe_load(f)
-
-
-OmegaConf.register_new_resolver("load_yaml", load_yaml_file)
-
-
-@hydra.main(version_base=None, config_path="../config", config_name="sample_config")
+@hydra.main(version_base=None, config_path="../config", config_name="cm_sample_config")
 def main(cfg: DictConfig):
     assert Path(cfg.model_dir, ".hydra").is_dir(), "Hydra configuration not found."
 
     model_prefix = "ema" if cfg.use_ema else "model"
 
-    list_models = list(pathlib.Path(cfg.model_dir, "train").glob(f"{model_prefix}*.pt"))
+    list_models = list(Path(cfg.model_dir, "cm-train").glob(f"{model_prefix}*.pt"))
     assert list_models, f"No {model_prefix} found."
 
     model_path = max(list_models, key=os.path.getctime)
@@ -41,30 +34,40 @@ def main(cfg: DictConfig):
     log_dir = Path(HydraConfig.get().run.dir).resolve()
     logger.configure(dir=str(log_dir), format_strs=["stdout"])
 
+    if "consistency" in train_cfg.training_mode:
+        distillation = True
+    else:
+        distillation = False
+
     env = get_env(train_cfg.env.name)
     state_dim = env.observation_space.shape[0]
     action_dim = env.action_space.shape[0]
     cond_dim = state_dim + action_dim
 
     logger.log("creating model and diffusion...")
-    diffusion = hydra.utils.call(train_cfg.diffusion.target)
+    diffusion = hydra.utils.call(train_cfg.diffusion.target, distillation=distillation)
     model = hydra.utils.instantiate(train_cfg.model.target, state_dim, cond_dim)
     model.load_state_dict(
         dist_util.load_state_dict(str(model_path), map_location="cpu")
     )
     model.to(dist_util.dev())
-    if cfg.use_fp16:
+    if train_cfg.use_fp16:
         model.convert_to_fp16()
     model.eval()
 
-    logger.log(f"sampling {train_cfg.env.name}...")
+    logger.log("sampling...")
+    if cfg.sampler == "multistep":
+        assert len(cfg.ts) > 0
+        ts = tuple(int(x) for x in cfg.ts.split(","))
+    else:
+        ts = None
 
     all_samples = []
     all_states = []
     all_actions = []
     all_next_states = []
+    generator = get_generator(cfg.generator, cfg.num_samples, cfg.seed)
     start = time.time()
-    # while len(all_samples) * cfg.batch_size < cfg.num_samples:
     for _ in trange(0, cfg.num_samples, cfg.batch_size):
         model_kwargs = {}
         traj = random_rollout(env, cfg.batch_size)
@@ -74,18 +77,27 @@ def main(cfg: DictConfig):
 
         actions = th.from_numpy(np.array(traj["actions"])).float().to(dist_util.dev())
         model_kwargs["action"] = actions
+
         all_actions.extend([np.array(traj["actions"])])
 
-        sample_fn = (
-            diffusion.p_sample_loop if not cfg.use_ddim else diffusion.ddim_sample_loop
-        )
-        sample = sample_fn(
+        sample = karras_sample(
+            diffusion,
             model,
             (cfg.batch_size, state_dim),
-            clip_denoised=cfg.clip_denoised,
+            steps=cfg.steps,
             model_kwargs=model_kwargs,
+            device=dist_util.dev(),
+            clip_denoised=cfg.clip_denoised,
+            sampler=cfg.sampler,
+            sigma_min=train_cfg.diffusion.target.sigma_min,
+            sigma_max=train_cfg.diffusion.target.sigma_max,
+            s_churn=cfg.s_churn,
+            s_tmin=cfg.s_tmin,
+            s_tmax=cfg.s_tmax,
+            s_noise=cfg.s_noise,
+            generator=generator,
+            ts=ts,
         )
-
         all_next_states.extend([np.array(traj["next_states"])])
 
         gathered_samples = [th.zeros_like(sample) for _ in range(dist.get_world_size())]
@@ -93,6 +105,7 @@ def main(cfg: DictConfig):
         all_samples.extend([sample.cpu().numpy() for sample in gathered_samples])
 
         logger.log(f"created {len(all_samples) * cfg.batch_size} samples")
+
     end = time.time()
 
     samples_arr = np.concatenate(all_samples, axis=0)[: cfg.num_samples]

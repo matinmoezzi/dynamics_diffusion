@@ -10,13 +10,15 @@ from dynamics_diffusion.resample import create_named_schedule_sampler
 from dynamics_diffusion.script_util import create_ema_and_scales_fn
 from dynamics_diffusion.train_util import CMTrainLoop, TrainLoop
 
+from hydra.core.hydra_config import HydraConfig
+
 
 @hydra.main(version_base=None, config_path="../config", config_name="cm_train_config")
 def main(cfg: DictConfig):
-    log_dir = f'{Path().resolve()}/logs/cm_train/{cfg.env.name}_{datetime.datetime.now().strftime("%Y-%m-%d-%H-%M-%S-%f")}'
+    log_dir = Path(HydraConfig.get().run.dir, "cm-train").resolve()
 
     dist_util.setup_dist()
-    logger.configure(dir=log_dir, format_strs=["stdout", "torch-tensorboard"])
+    logger.configure(dir=str(log_dir), format_strs=["stdout", "torch-tensorboard"])
 
     logger.log("creating data loader...")
     if cfg.batch_size == -1:
@@ -50,8 +52,10 @@ def main(cfg: DictConfig):
     else:
         raise ValueError(f"unknown training mode {cfg.training_mode}")
 
-    diffusion = hydra.utils.instantiate(cfg.diffusion, distillation=distillation)
-    model = hydra.utils.instantiate(cfg.model, x_dim=state_dim, cond_dim=cond_dim)
+    diffusion = hydra.utils.instantiate(cfg.diffusion.target, distillation=distillation)
+    model = hydra.utils.instantiate(
+        cfg.model.target, x_dim=state_dim, cond_dim=cond_dim
+    )
 
     model.to(dist_util.dev())
     model.train()
@@ -63,10 +67,10 @@ def main(cfg: DictConfig):
     if len(cfg.teacher_model_path) > 0:  # path to the teacher score model.
         logger.log(f"loading the teacher model from {cfg.teacher_model_path}")
         teacher_diffusion = hydra.utils.instantiate(
-            cfg.diffusion, distillation=distillation
+            cfg.diffusion.target, distillation=distillation
         )
         teacher_model = hydra.utils.instantiate(
-            cfg.model,
+            cfg.model.target,
             x_dim=state_dim,
             cond_dim=cond_dim,
             dropout=cfg.teacher_dropout,
@@ -93,7 +97,7 @@ def main(cfg: DictConfig):
 
     logger.log("creating the target model")
     target_model = hydra.utils.instantiate(
-        cfg.model, x_dim=state_dim, cond_dim=cond_dim
+        cfg.model.target, x_dim=state_dim, cond_dim=cond_dim
     )
 
     target_model.to(dist_util.dev())
@@ -111,6 +115,11 @@ def main(cfg: DictConfig):
         else:
             target_model = target_model.half()
 
+    if cfg.total_training_steps == -1:
+        total_training_steps = int(info["size"])
+    else:
+        total_training_steps = int(min(cfg.total_training_steps, info["size"]))
+
     logger.log("training...")
     CMTrainLoop(
         model=model,
@@ -119,7 +128,7 @@ def main(cfg: DictConfig):
         teacher_diffusion=teacher_diffusion,
         training_mode=cfg.training_mode,
         ema_scale_fn=ema_scale_fn,
-        total_training_steps=cfg.total_training_steps,
+        total_training_steps=total_training_steps,
         diffusion=diffusion,
         data=data,
         batch_size=batch_size,

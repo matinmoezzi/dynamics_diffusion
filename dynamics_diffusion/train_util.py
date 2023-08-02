@@ -415,11 +415,18 @@ class CMTrainLoop(TrainLoop):
 
     def run_loop(self):
         saved = False
-        while (
-            not self.lr_anneal_steps
-            or self.step < self.lr_anneal_steps
-            or self.global_step < self.total_training_steps
-        ):
+        # while (
+        #     not self.lr_anneal_steps
+        #     or self.step < self.lr_anneal_steps
+        #     or self.global_step < self.total_training_steps
+        # ):
+        for _ in trange(self.total_training_steps):
+            if not (
+                not self.lr_anneal_steps
+                or self.step < self.lr_anneal_steps
+                or self.global_step < self.total_training_steps
+            ):
+                break
             batch, cond = next(self.data)
             self.run_step(batch, cond)
             saved = False

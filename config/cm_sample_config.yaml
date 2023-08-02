@@ -1,0 +1,17 @@
+generator: "determ"
+clip_denoised: True
+use_ema: False
+num_samples: 10000
+batch_size: 16
+sampler: "heun"
+s_churn: 0.0
+s_tmin: 0.0
+s_tmax: .inf
+s_noise: 1.0
+steps: 40
+model_dir: ""
+seed: 42
+ts: ""
+hydra:
+  run:
+    dir: "${model_dir}/samples/${now:%Y%m%d-%H%M%S}"

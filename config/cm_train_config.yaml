@@ -9,7 +9,8 @@ teacher_dropout: 0.1
 training_mode: "consistency_distillation"
 target_ema_mode: "fixed"
 scale_mode: "fixed"
-total_training_steps: 600000
+total_training_steps: -1
+# total_training_steps: 600000
 start_ema: 0.0
 start_scales: 40
 end_scales: 40
@@ -29,3 +30,6 @@ save_interval: 10000
 resume_checkpoint: ""
 use_fp16: True
 fp16_scale_growth: 1e-3
+hydra:
+  run:
+    dir: ./logs/${env.name}/${diffusion.name}/${model.name}/${now:%Y%m%d-%H%M%S}
