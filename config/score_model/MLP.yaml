@@ -1,0 +1,3 @@
+name: MLP
+target:
+  _target_: dynamics_diffusion.models.MLP

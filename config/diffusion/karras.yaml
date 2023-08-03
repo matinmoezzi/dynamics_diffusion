@@ -6,3 +6,4 @@ target:
   sigma_data: 0.5
   distillation: False
   weight_schedule: "karras"
+  loss_norm: "l2"

@@ -1,21 +1,10 @@
 defaults:
-  - _self_
-  - model/MLP
-  - env/maze2d-umaze
-  - diffusion/gaussian_diffusion
-training_iter: -1
-schedule_sampler: "uniform"
-lr: 1e-4
-weight_decay: 0.0
-lr_anneal_steps: 0
-batch_size: 1
-microbatch: -1  # -1 disables microbatches
-ema_rate: "0.9999"  # comma-separated list of EMA values
-log_interval: 100
-save_interval: 10000
-resume_checkpoint: ""
-use_fp16: False
-fp16_scale_growth: 1e-3
+  - env: maze2d-large
+  - trainer: ddpm
+format_strs:
+  - stdout
+  - torch-tensorboard
+global_batch_size: 2048
 hydra:
   run:
-    dir: ./logs/${env.name}/${diffusion.name}/${model.name}/${now:%Y%m%d-%H%M%S}
+    dir: ./logs/${hydra:runtime.choices.trainer}/${env.name}/${trainer.diffusion.name}/${trainer.model.name}/${now:%Y%m%d-%H%M%S}

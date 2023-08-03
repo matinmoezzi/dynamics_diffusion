@@ -1,9 +1,9 @@
 defaults:
   - _self_
-  - model/MLP
-  - env/maze2d-umaze
-  - diffusion/karras_diffusion
-
+  - /model: MLP
+  - /diffusion: karras
+_target_: scripts.dynamics_train.cm_train
+_recursive_: False
 teacher_model_path: ""
 teacher_dropout: 0.1
 training_mode: "consistency_distillation"
@@ -15,13 +15,11 @@ start_ema: 0.0
 start_scales: 40
 end_scales: 40
 distill_steps_per_iter: 50000
-loss_norm: "lpips"
 
 schedule_sampler: "uniform"
 lr: 1e-4
 weight_decay: 0.0
 lr_anneal_steps: 0
-global_batch_size: 2048
 batch_size: -1
 microbatch: -1  # -1 disables microbatches
 ema_rate: "0.9999"  # comma-separated list of EMA values
@@ -30,6 +28,3 @@ save_interval: 10000
 resume_checkpoint: ""
 use_fp16: True
 fp16_scale_growth: 1e-3
-hydra:
-  run:
-    dir: ./logs/${env.name}/${diffusion.name}/${model.name}/${now:%Y%m%d-%H%M%S}
