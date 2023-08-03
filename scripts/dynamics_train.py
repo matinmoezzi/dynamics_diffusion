@@ -179,10 +179,7 @@ def cm_train(
         dst.data.copy_(src.data)
 
     if use_fp16:
-        if hasattr(target_model, "convert_to_fp16"):
-            target_model.convert_to_fp16()
-        else:
-            target_model = target_model.half()
+        target_model.convert_to_fp16()
 
     if total_training_steps == -1:
         total_training_steps = int(data_info["size"])
