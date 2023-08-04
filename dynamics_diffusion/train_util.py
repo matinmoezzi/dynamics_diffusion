@@ -7,7 +7,7 @@ import torch as th
 import numpy as np
 import torch.distributed as dist
 from torch.nn.parallel.distributed import DistributedDataParallel as DDP
-from torch.optim import AdamW, RAdam
+from torch.optim import AdamW, RAdam, Adam
 from tqdm import tqdm, trange
 
 from . import dist_util, logger
@@ -34,7 +34,7 @@ class TrainLoop:
         model,
         diffusion,
         data,
-        training_iter,
+        total_training_steps,
         batch_size,
         microbatch,
         lr,
@@ -67,7 +67,7 @@ class TrainLoop:
         self.schedule_sampler = schedule_sampler or UniformSampler(diffusion)
         self.weight_decay = weight_decay
         self.lr_anneal_steps = lr_anneal_steps
-        self.training_iter = training_iter
+        self.total_training_steps = int(total_training_steps)
 
         self.step = 0
         self.resume_step = 0
@@ -168,7 +168,7 @@ class TrainLoop:
         # ):
 
         # Run for a finite amount of iterations
-        for _ in trange(self.training_iter):
+        for _ in trange(self.total_training_steps):
             if not (
                 not self.lr_anneal_steps
                 or self.step + self.resume_step < self.lr_anneal_steps
@@ -326,17 +326,14 @@ class CMTrainLoop(TrainLoop):
         teacher_diffusion,
         training_mode,
         ema_scale_fn,
-        total_training_steps,
         **kwargs,
     ):
-        kwargs["training_iter"] = total_training_steps
         super().__init__(**kwargs)
         self.training_mode = training_mode
         self.ema_scale_fn = ema_scale_fn
         self.target_model = target_model
         self.teacher_model = teacher_model
         self.teacher_diffusion = teacher_diffusion
-        self.total_training_steps = total_training_steps
 
         if target_model:
             self._load_and_sync_target_parameters()
@@ -627,3 +624,126 @@ class CMTrainLoop(TrainLoop):
         step = self.global_step
         logger.logkv("step", step)
         logger.logkv("samples", (step + 1) * self.global_batch)
+
+
+class SDETrainLoop(TrainLoop):
+    def __init__(
+        self,
+        *,
+        score_model,
+        sde,
+        data,
+        data_info,
+        total_training_steps,
+        batch_size,
+        microbatch,
+        lr,
+        ema_rate,
+        log_interval,
+        save_interval,
+        resume_checkpoint,
+        use_fp16,
+        fp16_scale_growth,
+        weight_decay,
+        lr_anneal_steps,
+        beta1,
+        eps,
+        warmup,
+        grad_clip,
+        optimizer,
+    ):
+        self.score_model = score_model
+        self.sde = sde
+        self.data = data
+        self.batch_size = batch_size
+        self.microbatch = microbatch if microbatch > 0 else batch_size
+        self.lr = lr
+        self.ema_rate = (
+            [ema_rate]
+            if isinstance(ema_rate, float)
+            else [float(x) for x in ema_rate.split(",")]
+        )
+        self.log_interval = log_interval
+        self.save_interval = save_interval
+        self.resume_checkpoint = resume_checkpoint
+        self.use_fp16 = use_fp16
+        self.fp16_scale_growth = fp16_scale_growth
+        self.weight_decay = weight_decay
+        self.lr_anneal_steps = lr_anneal_steps
+
+        if total_training_steps == -1:
+            self.total_training_steps = int(data_info["size"])
+        else:
+            self.total_training_steps = int(
+                min(total_training_steps, data_info["size"])
+            )
+
+        self.beta1 = beta1
+        self.eps = eps
+        self.warmup = warmup
+        self.grad_clip = grad_clip
+        self.optimizer = optimizer
+
+        self.step = 0
+        self.resume_step = 0
+        self.global_batch = self.batch_size * dist.get_world_size()
+
+        self.sync_cuda = th.cuda.is_available()
+
+        self._load_and_sync_parameters()
+        self.mp_trainer = MixedPrecisionTrainer(
+            model=self.score_model,
+            use_fp16=self.use_fp16,
+            fp16_scale_growth=fp16_scale_growth,
+        )
+
+        if optimizer == "Adam":
+            self.opt = Adam(
+                self.mp_trainer.master_params,
+                lr=self.lr,
+                betas=(self.beta1, 0.999),
+                eps=self.eps,
+                weight_decay=self.weight_decay,
+            )
+        elif optimizer == "AdamW":
+            self.opt = AdamW(
+                self.mp_trainer.master_params,
+                lr=self.lr,
+                weight_decay=self.weight_decay,
+                betas=(self.beta1, 0.999),
+                eps=self.eps,
+            )
+        else:
+            raise ValueError(f"Unknown optimizer: {optimizer}")
+
+        if self.resume_step:
+            self._load_optimizer_state()
+            # Model was resumed, either due to a restart or a checkpoint
+            # being specified at the command line.
+            self.ema_params = [
+                self._load_ema_parameters(rate) for rate in self.ema_rate
+            ]
+        else:
+            self.ema_params = [
+                copy.deepcopy(self.mp_trainer.master_params)
+                for _ in range(len(self.ema_rate))
+            ]
+
+        if th.cuda.is_available():
+            self.use_ddp = True
+            self.ddp_model = DDP(
+                self.score_model,
+                device_ids=[dist_util.dev()],
+                output_device=dist_util.dev(),
+                broadcast_buffers=False,
+                bucket_cap_mb=128,
+                find_unused_parameters=False,
+            )
+        else:
+            if dist.get_world_size() > 1:
+                logger.warn(
+                    "Distributed training requires CUDA. "
+                    "Gradients will not be synchronized properly!"
+                )
+            self.use_ddp = False
+            self.ddp_model = self.model

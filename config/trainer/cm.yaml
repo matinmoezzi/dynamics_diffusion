@@ -2,14 +2,14 @@ defaults:
   - _self_
   - /model: MLP
   - /diffusion: karras
-_target_: scripts.dynamics_train.cm_train
+_target_: dynamics_diffusion.trainer_util.CMTrainer 
 _recursive_: False
 teacher_model_path: ""
 teacher_dropout: 0.1
 training_mode: "consistency_distillation"
 target_ema_mode: "fixed"
 scale_mode: "fixed"
-total_training_steps: -1
+total_training_steps: 1e5
 # total_training_steps: 600000
 start_ema: 0.0
 start_scales: 40
@@ -28,3 +28,4 @@ save_interval: 10000
 resume_checkpoint: ""
 use_fp16: True
 fp16_scale_growth: 1e-3
+global_batch_size: 2048

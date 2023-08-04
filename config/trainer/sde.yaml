@@ -1,21 +1,28 @@
 defaults:
   - _self_
-  - /model: MLP
-  - /diffusion: gaussian
-_target_: dynamics_diffusion.trainer_util.DDPMTrainer 
+  - /score_model: MLP
+  - /sde: VPSDE
+_target_: dynamics_diffusion.trainer_util.SDETrainer 
 _recursive_: False
+
 total_training_steps: 1e5
-schedule_sampler: "uniform"
+batch_size: -1
+microbatch: -1  # -1 disables microbatches
+
 lr: 1e-4
 weight_decay: 0.0
 lr_anneal_steps: 0
-batch_size: -1
-microbatch: -1  # -1 disables microbatches
+beta1: 0.9
+eps: 1e-8
+warmpup: 5000
+grad_clip: 1.0
+optimizer: "Adam"
+
 ema_rate: "0.9999"  # comma-separated list of EMA values
 log_interval: 100
 save_interval: 10000
 resume_checkpoint: ""
 use_fp16: False
 fp16_scale_growth: 1e-3
-global_batch_size: 2048
 
+global_batch_size: 2048
