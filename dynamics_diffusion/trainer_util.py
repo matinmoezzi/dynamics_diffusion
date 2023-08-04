@@ -14,18 +14,12 @@ from dynamics_diffusion.rl_datasets import get_d4rl_dataset
 
 
 class Trainer:
-    def __init__(self, cfg, model, diffusion, global_batch_size, **kwargs) -> None:
+    def __init__(self, cfg, model, diffusion, **kwargs) -> None:
         self.model_cfg = model
         self.diffusion_cfg = diffusion
         self.kwargs = kwargs
 
         logger.log("creating data loader...")
-        if kwargs["batch_size"] == -1:
-            kwargs["batch_size"] = global_batch_size // dist.get_world_size()
-            if global_batch_size % dist.get_world_size() != 0:
-                logger.log(
-                    f"warning, using smaller global_batch_size of {dist.get_world_size()*batch_size} instead of {global_batch_size}"
-                )
 
         self.data, self.info = get_d4rl_dataset(
             cfg.env.name,
@@ -59,10 +53,8 @@ class Trainer:
 
 
 class DDPMTrainer(Trainer):
-    def __init__(
-        self, cfg, model, diffusion, global_batch_size, schedule_sampler, **kwargs
-    ) -> None:
-        super().__init__(cfg, model, diffusion, global_batch_size, **kwargs)
+    def __init__(self, cfg, model, diffusion, schedule_sampler, **kwargs) -> None:
+        super().__init__(cfg, model, diffusion, **kwargs)
         self.schedule_sampler = create_named_schedule_sampler(
             schedule_sampler, self.diffusion
         )
@@ -103,7 +95,7 @@ class CMTrainer(Trainer):
         teacher_dropout,
         **kwargs,
     ) -> None:
-        super().__init__(cfg, model, diffusion, global_batch_size, **kwargs)
+        super().__init__(cfg, model, diffusion, **kwargs)
         if kwargs["use_fp16"]:
             self.model.convert_to_fp16()
 
@@ -127,6 +119,13 @@ class CMTrainer(Trainer):
             self.distillation = True
         else:
             raise ValueError(f"unknown training mode {kwargs['training_mode']}")
+
+        if kwargs["batch_size"] == -1:
+            kwargs["batch_size"] = global_batch_size // dist.get_world_size()
+            if global_batch_size % dist.get_world_size() != 0:
+                logger.log(
+                    f"warning, using smaller global_batch_size of {dist.get_world_size()*kwargs['batch_size']} instead of {global_batch_size}"
+                )
 
         if len(teacher_model_path) > 0:  # path to the teacher score model.
             logger.log(f"loading the teacher model from {teacher_model_path}")
@@ -199,8 +198,8 @@ class CMTrainer(Trainer):
 
 
 class SDETrainer(Trainer):
-    def __init__(self, cfg, score_model, sde, global_batch_size, **kwargs) -> None:
-        super().__init__(cfg, score_model, sde, global_batch_size, **kwargs)
+    def __init__(self, cfg, score_model, sde, **kwargs) -> None:
+        super().__init__(cfg, score_model, sde, **kwargs)
 
     def create_model(self, model_cfg, state_dim, cond_dim):
         self.model = hydra.utils.instantiate(model_cfg.target, state_dim, cond_dim)
