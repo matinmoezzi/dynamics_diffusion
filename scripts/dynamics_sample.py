@@ -72,7 +72,7 @@ def main(cfg: DictConfig):
             clip_denoised=cfg.clip_denoised,
         )
     elif train_cfg.trainer._target_.split(".")[-1] == "CMTrainer":
-        if "consistency" in train_cfg.training_mode:
+        if "consistency" in train_cfg.trainer.training_mode:
             distillation = True
         else:
             distillation = False
@@ -94,8 +94,8 @@ def main(cfg: DictConfig):
             device=dist_util.dev(),
             clip_denoised=cfg.clip_denoised,
             sampler=cfg.cm_sampler.sampler,
-            sigma_min=train_cfg.diffusion.target.sigma_min,
-            sigma_max=train_cfg.diffusion.target.sigma_max,
+            sigma_min=train_cfg.trainer.diffusion.target.sigma_min,
+            sigma_max=train_cfg.trainer.diffusion.target.sigma_max,
             s_churn=cfg.cm_sampler.s_churn,
             s_tmin=cfg.cm_sampler.s_tmin,
             s_tmax=cfg.cm_sampler.s_tmax,
