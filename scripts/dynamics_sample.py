@@ -84,7 +84,9 @@ def main(cfg: DictConfig):
             ts = tuple(int(x) for x in cfg.ts.split(","))
         else:
             ts = None
-        generator = get_generator(cfg.generator, cfg.num_samples, cfg.cm_sampler.seed)
+        generator = get_generator(
+            cfg.cm_sampler.generator, cfg.num_samples, cfg.cm_sampler.seed
+        )
         sample_fn_wrapper = partial(
             karras_sample,
             diffusion,
