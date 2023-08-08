@@ -1,0 +1,3 @@
+name: maze2d-umaze-v1
+deterministic_loader: True
+reward_tune: null
