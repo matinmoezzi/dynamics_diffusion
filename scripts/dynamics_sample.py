@@ -59,7 +59,7 @@ def main(cfg: DictConfig):
         model.convert_to_fp16()
     model.eval()
 
-    if train_cfg.trainer._target_.split(".")[-1] == "ddpm_train":
+    if train_cfg.trainer._target_.split(".")[-1] == "DDPMTrainer":
         diffusion = hydra.utils.call(train_cfg.trainer.diffusion.target)
         sample_fn = (
             diffusion.p_sample_loop if not cfg.use_ddim else diffusion.ddim_sample_loop
@@ -71,7 +71,7 @@ def main(cfg: DictConfig):
             (cfg.batch_size, state_dim),
             clip_denoised=cfg.clip_denoised,
         )
-    elif train_cfg.trainer._target_.split(".")[-1] == "cm_train":
+    elif train_cfg.trainer._target_.split(".")[-1] == "CMTrainer":
         if "consistency" in train_cfg.training_mode:
             distillation = True
         else:
@@ -103,6 +103,8 @@ def main(cfg: DictConfig):
             generator=generator,
             ts=ts,
         )
+    else:
+        raise NotImplementedError(f"{train_cfg.trainer._target_} not supported.")
 
     logger.log(f"sampling {train_cfg.env.name}...")
 
