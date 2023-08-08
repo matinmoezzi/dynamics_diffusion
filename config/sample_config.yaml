@@ -2,7 +2,7 @@ model_dir: ""
 num_samples: 100
 batch_size: 16
 use_ema: False
-clip_denoised: True
+clip_denoised: False
 use_ddim: False
 cm_sampler:
   generator: "determ"
