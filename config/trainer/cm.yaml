@@ -9,8 +9,7 @@ teacher_dropout: 0.1
 training_mode: "consistency_distillation"
 target_ema_mode: "fixed"
 scale_mode: "fixed"
-total_training_steps: 1e5
-# total_training_steps: 600000
+total_training_steps: 5e6
 start_ema: 0.0
 start_scales: 40
 end_scales: 40
@@ -20,11 +19,11 @@ schedule_sampler: "uniform"
 lr: 1e-4
 weight_decay: 0.0
 lr_anneal_steps: 0
-batch_size: 64
+batch_size: 1
 microbatch: -1  # -1 disables microbatches
 ema_rate: "0.9999"  # comma-separated list of EMA values
-log_interval: 1000
-save_interval: 10000
+log_interval: 5000
+save_interval: 100000
 resume_checkpoint: ""
 use_fp16: True
 fp16_scale_growth: 1e-3
