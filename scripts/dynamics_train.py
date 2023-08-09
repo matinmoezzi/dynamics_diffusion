@@ -9,7 +9,6 @@ from pathlib import Path
 
 
 from dynamics_diffusion import dist_util, logger
-from dynamics_diffusion.train_util import SDETrainLoop
 
 
 @hydra.main(version_base=None, config_path="../config", config_name="train_config.yaml")

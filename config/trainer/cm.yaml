@@ -27,4 +27,3 @@ save_interval: 100000
 resume_checkpoint: ""
 use_fp16: True
 fp16_scale_growth: 1e-3
-global_batch_size: 2048

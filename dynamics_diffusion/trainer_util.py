@@ -83,7 +83,6 @@ class CMTrainer(Trainer):
         cfg,
         model,
         diffusion,
-        global_batch_size,
         schedule_sampler,
         target_ema_mode,
         start_ema,
@@ -95,7 +94,15 @@ class CMTrainer(Trainer):
         teacher_dropout,
         **kwargs,
     ) -> None:
+        if kwargs["training_mode"] == "progdist":
+            self.distillation = False
+        elif "consistency" in kwargs["training_mode"]:
+            self.distillation = True
+        else:
+            raise ValueError(f"unknown training mode {kwargs['training_mode']}")
+
         super().__init__(cfg, model, diffusion, **kwargs)
+
         if kwargs["use_fp16"]:
             self.model.convert_to_fp16()
 
@@ -112,20 +119,6 @@ class CMTrainer(Trainer):
             total_steps=kwargs["total_training_steps"],
             distill_steps_per_iter=distill_steps_per_iter,
         )
-
-        if kwargs["training_mode"] == "progdist":
-            self.distillation = False
-        elif "consistency" in kwargs["training_mode"]:
-            self.distillation = True
-        else:
-            raise ValueError(f"unknown training mode {kwargs['training_mode']}")
-
-        if kwargs["batch_size"] == -1:
-            kwargs["batch_size"] = global_batch_size // dist.get_world_size()
-            if global_batch_size % dist.get_world_size() != 0:
-                logger.log(
-                    f"warning, using smaller global_batch_size of {dist.get_world_size()*kwargs['batch_size']} instead of {global_batch_size}"
-                )
 
         if len(teacher_model_path) > 0:  # path to the teacher score model.
             logger.log(f"loading the teacher model from {teacher_model_path}")
@@ -181,7 +174,9 @@ class CMTrainer(Trainer):
         self.model.train()
 
     def create_diffusion(self, diffusion_cfg):
-        self.diffusion = hydra.utils.call(diffusion_cfg.target)
+        self.diffusion = hydra.utils.call(
+            diffusion_cfg.target, distiliation=self.distillation
+        )
 
     def _run(self):
         CMTrainLoop(
