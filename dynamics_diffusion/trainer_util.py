@@ -175,7 +175,7 @@ class CMTrainer(Trainer):
 
     def create_diffusion(self, diffusion_cfg):
         self.diffusion = hydra.utils.call(
-            diffusion_cfg.target, distiliation=self.distillation
+            diffusion_cfg.target, distillation=self.distillation
         )
 
     def _run(self):
