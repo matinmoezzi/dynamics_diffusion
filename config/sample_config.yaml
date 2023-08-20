@@ -14,6 +14,14 @@ cm_sampler:
   steps: 40
   seed: 42
   ts: ""
+sde_sampler:
+  n_steps_each: 1
+  noise_removal: True
+  probability_flow: False
+  snr: 0.17
+  method: 'pc'
+  predictor: 'euler_maruyama'
+  corrector: 'none'
 
 hydra:
   run:

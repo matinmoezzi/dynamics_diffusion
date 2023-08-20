@@ -1,22 +1,25 @@
 defaults:
   - _self_
-  - /score_model: MLP
-  - /sde: VPSDE
+  - /model: MLP
+  - /diffusion: VPSDE
 _target_: dynamics_diffusion.trainer_util.SDETrainer 
 _recursive_: False
 
-total_training_steps: 1e5
-batch_size: -1
+continuous: True
+likelihood_weighting: False
+
+total_training_steps: 1e6
+batch_size: 1
 microbatch: -1  # -1 disables microbatches
 
+opt_name: "Adam"
 lr: 1e-4
 weight_decay: 0.0
 lr_anneal_steps: 0
 beta1: 0.9
 eps: 1e-8
-warmpup: 5000
+warmup: 5000
 grad_clip: 1.0
-optimizer: "Adam"
 
 ema_rate: "0.9999"  # comma-separated list of EMA values
 log_interval: 100
@@ -24,5 +27,3 @@ save_interval: 10000
 resume_checkpoint: ""
 use_fp16: False
 fp16_scale_growth: 1e-3
-
-global_batch_size: 2048

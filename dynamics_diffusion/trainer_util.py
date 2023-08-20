@@ -8,7 +8,7 @@ import hydra
 from dynamics_diffusion import dist_util, logger
 from dynamics_diffusion.resample import create_named_schedule_sampler
 from dynamics_diffusion.script_util import create_ema_and_scales_fn
-from dynamics_diffusion.train_util import CMTrainLoop, TrainLoop
+from dynamics_diffusion.train_util import CMTrainLoop, SDETrainLoop, TrainLoop
 import torch.distributed as dist
 from dynamics_diffusion.rl_datasets import get_d4rl_dataset
 
@@ -193,8 +193,8 @@ class CMTrainer(Trainer):
 
 
 class SDETrainer(Trainer):
-    def __init__(self, cfg, score_model, sde, **kwargs) -> None:
-        super().__init__(cfg, score_model, sde, **kwargs)
+    def __init__(self, cfg, model, diffusion, **kwargs) -> None:
+        super().__init__(cfg, model, diffusion, **kwargs)
 
     def create_model(self, model_cfg, state_dim, cond_dim):
         self.model = hydra.utils.instantiate(model_cfg.target, state_dim, cond_dim)
@@ -202,4 +202,12 @@ class SDETrainer(Trainer):
         self.model.train()
 
     def create_diffusion(self, diffusion_cfg):
-        self.diffusion = hydra.utils.call(diffusion_cfg.target)
+        self.diffusion = hydra.utils.instantiate(diffusion_cfg.target)
+
+    def _run(self):
+        SDETrainLoop(
+            score_model=self.model,
+            sde=self.diffusion,
+            data=self.data,
+            **self.kwargs,
+        ).run_loop()

@@ -9,6 +9,9 @@ import torch.distributed as dist
 from torch.nn.parallel.distributed import DistributedDataParallel as DDP
 from torch.optim import AdamW, RAdam, Adam
 from tqdm import tqdm, trange
+from dynamics_diffusion.nn import mean_flat
+
+from dynamics_diffusion.sde import SDE, VESDE, VPSDE, subVPSDE
 
 from . import dist_util, logger
 from .fp16_util import MixedPrecisionTrainer
@@ -42,11 +45,15 @@ class TrainLoop:
         log_interval,
         save_interval,
         resume_checkpoint,
+        opt_name: str,
         use_fp16=False,
         fp16_scale_growth=1e-3,
         schedule_sampler=None,
         weight_decay=0.0,
         lr_anneal_steps=0,
+        beta1=0.9,
+        beta2=0.999,
+        eps=1e-8,
     ):
         self.model = model
         self.diffusion = diffusion
@@ -64,10 +71,18 @@ class TrainLoop:
         self.resume_checkpoint = resume_checkpoint
         self.use_fp16 = use_fp16
         self.fp16_scale_growth = fp16_scale_growth
-        self.schedule_sampler = schedule_sampler or UniformSampler(diffusion)
+        if not isinstance(self.diffusion, SDE):
+            self.schedule_sampler = schedule_sampler or UniformSampler(diffusion)
+        else:
+            self.schedule_sampler = schedule_sampler
         self.weight_decay = weight_decay
         self.lr_anneal_steps = lr_anneal_steps
         self.total_training_steps = int(total_training_steps)
+
+        self.beta1 = beta1
+        self.beta2 = beta2
+        self.eps = eps
+        self.opt_name = opt_name.lower()
 
         self.step = 0
         self.resume_step = 0
@@ -82,9 +97,7 @@ class TrainLoop:
             fp16_scale_growth=fp16_scale_growth,
         )
 
-        self.opt = AdamW(
-            self.mp_trainer.master_params, lr=self.lr, weight_decay=self.weight_decay
-        )
+        self.opt = self._get_optimizer()
         if self.resume_step:
             self._load_optimizer_state()
             # Model was resumed, either due to a restart or a checkpoint
@@ -269,6 +282,53 @@ class TrainLoop:
                 th.save(self.opt.state_dict(), f)
 
         dist.barrier()
+
+    def _get_optimizer(self):
+        if self.opt_name == "adam":
+            return th.optim.Adam(
+                self.mp_trainer.master_params,
+                lr=self.lr,
+                betas=(self.beta1, self.beta2),
+                eps=self.eps,
+                weight_decay=self.weight_decay,
+            )
+        elif self.opt_name == "adamax":
+            return th.optim.Adamax(
+                self.mp_trainer.master_params,
+                lr=self.lr,
+                betas=(self.beta1, self.beta2),
+                eps=self.eps,
+                weight_decay=self.weight_decay,
+            )
+        elif self.opt_name == "adamw":
+            return th.optim.AdamW(
+                self.mp_trainer.master_params,
+                lr=self.lr,
+                betas=(self.beta1, self.beta2),
+                eps=self.eps,
+                weight_decay=self.weight_decay,
+            )
+        elif self.opt_name == "rmsprop":
+            return th.optim.RMSprop(
+                self.mp_trainer.master_params,
+                lr=self.lr,
+                alpha=self.alpha,
+                eps=self.eps,
+                weight_decay=self.weight_decay,
+                momentum=self.momentum,
+                centered=self.centered,
+            )
+        elif self.opt_name == "sgd":
+            return th.optim.SGD(
+                self.mp_trainer.master_params,
+                lr=self.lr,
+                momentum=self.momentum,
+                dampening=self.dampening,
+                weight_decay=self.weight_decay,
+                nesterov=self.nesterov,
+            )
+        else:
+            raise ValueError(f"Unknown optimizer {self.opt_name}")
 
 
 def parse_resume_step_from_filename(filename):
@@ -632,118 +692,135 @@ class SDETrainLoop(TrainLoop):
         *,
         score_model,
         sde,
-        data,
-        data_info,
-        total_training_steps,
-        batch_size,
-        microbatch,
-        lr,
-        ema_rate,
-        log_interval,
-        save_interval,
-        resume_checkpoint,
-        use_fp16,
-        fp16_scale_growth,
-        weight_decay,
-        lr_anneal_steps,
-        beta1,
-        eps,
         warmup,
         grad_clip,
-        optimizer,
+        continuous,
+        likelihood_weighting,
+        **kwargs,
     ):
-        self.score_model = score_model
-        self.sde = sde
-        self.data = data
-        self.batch_size = batch_size
-        self.microbatch = microbatch if microbatch > 0 else batch_size
-        self.lr = lr
-        self.ema_rate = (
-            [ema_rate]
-            if isinstance(ema_rate, float)
-            else [float(x) for x in ema_rate.split(",")]
+        super().__init__(
+            diffusion=sde, model=score_model, schedule_sampler=None, **kwargs
         )
-        self.log_interval = log_interval
-        self.save_interval = save_interval
-        self.resume_checkpoint = resume_checkpoint
-        self.use_fp16 = use_fp16
-        self.fp16_scale_growth = fp16_scale_growth
-        self.weight_decay = weight_decay
-        self.lr_anneal_steps = lr_anneal_steps
-
-        if total_training_steps == -1:
-            self.total_training_steps = int(data_info["size"])
-        else:
-            self.total_training_steps = int(
-                min(total_training_steps, data_info["size"])
-            )
-
-        self.beta1 = beta1
-        self.eps = eps
         self.warmup = warmup
         self.grad_clip = grad_clip
-        self.optimizer = optimizer
+        self.continuous = continuous
+        self.likelihood_weighting = likelihood_weighting
 
-        self.step = 0
-        self.resume_step = 0
-        self.global_batch = self.batch_size * dist.get_world_size()
+    def run_step(self, batch, cond):
+        self.forward_backward(batch, cond)
+        if self.warmup > 0:
+            for g in self.opt.param_groups:
+                g["lr"] = self.lr * np.minimum(self.resume_step / self.warmup, 1.0)
+        if self.grad_clip >= 0:
+            th.nn.utils.clip_grad_norm_(
+                self.mp_trainer.master_params, max_norm=self.grad_clip
+            )
+        took_step = self.mp_trainer.optimize(self.opt)
+        if took_step:
+            self._update_ema()
+        self._anneal_lr()
+        self.log_step()
 
-        self.sync_cuda = th.cuda.is_available()
+    def forward_backward(self, batch, cond):
+        self.mp_trainer.zero_grad()
+        for i in range(0, batch.shape[0], self.microbatch):
+            micro = batch[i : i + self.microbatch].to(dist_util.dev())
+            micro_cond = {
+                k: v[i : i + self.microbatch].to(dist_util.dev())
+                for k, v in cond.items()
+            }
+            last_batch = (i + self.microbatch) >= batch.shape[0]
 
-        self._load_and_sync_parameters()
-        self.mp_trainer = MixedPrecisionTrainer(
-            model=self.score_model,
-            use_fp16=self.use_fp16,
-            fp16_scale_growth=fp16_scale_growth,
+            if self.continuous:
+                t = (
+                    th.rand(batch.shape[0], device=dist_util.dev())
+                    * (self.diffusion.T - self.eps)
+                    + self.eps
+                )
+                compute_losses = functools.partial(
+                    self._continuous_loss, micro, t, micro_cond
+                )
+            else:
+                t = th.randint(
+                    0, self.diffusion.N, (micro.shape[0],), device=dist_util.dev()
+                )
+                compute_losses = functools.partial(
+                    self.diffusion.training_losses,
+                    model=self.ddp_model,
+                    batch=micro,
+                    labels=t,
+                    model_kwargs=micro_cond,
+                )
+
+            if last_batch or not self.use_ddp:
+                losses = compute_losses()
+            else:
+                with self.ddp_model.no_sync():
+                    losses = compute_losses()
+
+            loss = (losses["loss"]).mean()
+            log_loss_dict(
+                self.diffusion, t, {k: v.unsqueeze(0) for k, v in losses.items()}
+            )
+            self.mp_trainer.backward(loss)
+
+    def _continuous_loss(self, batch, t, model_kwargs):
+        reduce_op = (
+            th.mean
+            if self.diffusion.reduce_mean
+            else lambda *args, **kwargs: 0.5 * th.sum(*args, **kwargs)
         )
 
-        if optimizer == "Adam":
-            self.opt = Adam(
-                self.mp_trainer.master_params,
-                lr=self.lr,
-                betas=(self.beta1, 0.999),
-                eps=self.eps,
-                weight_decay=self.weight_decay,
-            )
-        elif optimizer == "AdamW":
-            self.opt = AdamW(
-                self.mp_trainer.master_params,
-                lr=self.lr,
-                weight_decay=self.weight_decay,
-                betas=(self.beta1, 0.999),
-                eps=self.eps,
-            )
-        else:
-            raise ValueError(f"Unknown optimizer: {optimizer}")
+        z = th.randn_like(batch)
 
-        if self.resume_step:
-            self._load_optimizer_state()
-            # Model was resumed, either due to a restart or a checkpoint
-            # being specified at the command line.
-            self.ema_params = [
-                self._load_ema_parameters(rate) for rate in self.ema_rate
-            ]
-        else:
-            self.ema_params = [
-                copy.deepcopy(self.mp_trainer.master_params)
-                for _ in range(len(self.ema_rate))
-            ]
+        mean, std = self.diffusion.marginal_prob(batch, t)
+        perturbed_data = mean + std[:, None] * z
+        score = self._get_score(perturbed_data, t, model_kwargs)
 
-        if th.cuda.is_available():
-            self.use_ddp = True
-            self.ddp_model = DDP(
-                self.score_model,
-                device_ids=[dist_util.dev()],
-                output_device=dist_util.dev(),
-                broadcast_buffers=False,
-                bucket_cap_mb=128,
-                find_unused_parameters=False,
-            )
+        if not self.likelihood_weighting:
+            losses = th.square(score * std[:, None] + z)
+            losses = reduce_op(losses.reshape(losses.shape[0], -1), dim=-1)
         else:
-            if dist.get_world_size() > 1:
-                logger.warn(
-                    "Distributed training requires CUDA. "
-                    "Gradients will not be synchronized properly!"
-                )
-            self.use_ddp = False
-            self.ddp_model = self.model
+            g2 = self.diffusion.sde(th.zeros_like(batch), t)[1] ** 2
+            losses = th.square(score + z / std[:, None])
+            losses = reduce_op(losses.reshape(losses.shape[0], -1), dim=-1) * g2
+
+        loss = mean_flat(losses)
+        return {"loss": loss}
+
+    def _get_score(self, x, t, model_kwargs=None):
+        if isinstance(self.diffusion, VPSDE) or isinstance(self.diffusion, subVPSDE):
+            if self.continuous or isinstance(self.diffusion, subVPSDE):
+                # For VP-trained models, t=0 corresponds to the lowest noise level
+                # The maximum value of time embedding is assumed to 999 for
+                # continuously-trained models.
+                labels = t * 999
+                score = self.ddp_model(x, labels, **model_kwargs)
+                std = self.diffusion.marginal_prob(th.zeros_like(x), t)[1]
+            else:
+                # For VP-trained models, t=0 corresponds to the lowest noise level
+                labels = t * (self.diffusion.N - 1)
+                score = self.ddp_model(x, labels, **model_kwargs)
+                std = self.diffusion.sqrt_1m_alphas_cumprod.to(labels.device)[
+                    labels.long()
+                ]
+
+            score = -score / std[:, None]
+            return score
+
+        elif isinstance(self.diffusion, VESDE):
+            if self.continuous:
+                labels = self.diffusion.marginal_prob(th.zeros_like(x), t)[1]
+            else:
+                # For VE-trained models, t=0 corresponds to the highest noise level
+                labels = self.diffusion.T - t
+                labels *= self.diffusion.N - 1
+                labels = th.round(labels).long()
+
+            score = self.ddp_model(x, labels, **model_kwargs)
+            return score
+
+        else:
+            raise NotImplementedError(
+                f"SDE class {self.diffusion.__class__.__name__} not yet supported."
+            )

@@ -12,11 +12,12 @@ import torch.distributed as dist
 from tqdm import trange
 import yaml
 
-from dynamics_diffusion import dist_util, logger
+from dynamics_diffusion import dist_util, logger, sde_sampling
 from dynamics_diffusion.karras_diffusion import karras_sample
 from dynamics_diffusion.random_util import get_generator
 from dynamics_diffusion.rl_datasets import get_env
 from dynamics_diffusion.script_util import random_rollout
+from dynamics_diffusion.sde import VESDE
 
 
 def load_yaml_file(file_path: str):
@@ -58,6 +59,8 @@ def main(cfg: DictConfig):
     if train_cfg.trainer.use_fp16:
         model.convert_to_fp16()
     model.eval()
+
+    is_sde = False
 
     if train_cfg.trainer._target_.split(".")[-1] == "DDPMTrainer":
         diffusion = hydra.utils.call(train_cfg.trainer.diffusion.target)
@@ -105,6 +108,23 @@ def main(cfg: DictConfig):
             generator=generator,
             ts=ts,
         )
+    elif train_cfg.trainer._target_.split(".")[-1] == "SDETrainer":
+        sde = hydra.utils.instantiate(train_cfg.trainer.diffusion.target)
+        sampling_eps = 1e-3
+        if isinstance(sde, VESDE):
+            sampling_eps = 1e-5
+        sampling_shape = (cfg.batch_size, state_dim)
+        inverse_scaler = lambda x: x
+        sampling_fn = partial(
+            sde_sampling.get_sampling_fn,
+            cfg.sde_sampler,
+            sde,
+            sampling_shape,
+            inverse_scaler,
+            sampling_eps,
+            continuous=train_cfg.trainer.continuous,
+        )
+        is_sde = True
     else:
         raise NotImplementedError(f"{train_cfg.trainer._target_} not supported.")
 
@@ -128,7 +148,10 @@ def main(cfg: DictConfig):
         all_actions.extend([np.array(traj["actions"])])
         all_next_states.extend([np.array(traj["next_states"])])
 
-        sample = sample_fn_wrapper(model_kwargs=model_kwargs)
+        if is_sde:
+            sample, n = sampling_fn(model_kwargs=model_kwargs)(model)
+        else:
+            sample = sample_fn_wrapper(model_kwargs=model_kwargs)
 
         gathered_samples = [th.zeros_like(sample) for _ in range(dist.get_world_size())]
         dist.all_gather(gathered_samples, sample)  # gather not supported with NCCL
