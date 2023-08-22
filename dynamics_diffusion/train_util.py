@@ -741,6 +741,9 @@ class SDETrainLoop(TrainLoop):
                     self._continuous_loss, micro, t, micro_cond
                 )
             else:
+                assert (
+                    not self.likelihood_weighting
+                ), "Likelihood weighting is not supported for original SMLD/DDPM training."
                 t = th.randint(
                     0, self.diffusion.N, (micro.shape[0],), device=dist_util.dev()
                 )

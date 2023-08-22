@@ -5,7 +5,7 @@ defaults:
 _target_: dynamics_diffusion.trainer_util.SDETrainer 
 _recursive_: False
 
-continuous: True
+continuous: False
 likelihood_weighting: False
 
 total_training_steps: 1e6
