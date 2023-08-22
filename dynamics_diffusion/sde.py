@@ -175,7 +175,7 @@ class VPSDE(SDE):
         G = sqrt_beta
         return f, G
 
-    def training_loss(self, model, batch, labels, model_kwargs=None):
+    def training_losses(self, model, batch, labels, model_kwargs=None):
         losses = {}
         if model_kwargs is None:
             model_kwargs = {}
