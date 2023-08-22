@@ -769,7 +769,7 @@ class SDETrainLoop(TrainLoop):
 
     def _continuous_loss(self, batch, t, model_kwargs):
         reduce_op = (
-            th.mean
+            mean_flat
             if self.diffusion.reduce_mean
             else lambda *args, **kwargs: 0.5 * th.sum(*args, **kwargs)
         )
@@ -788,8 +788,7 @@ class SDETrainLoop(TrainLoop):
             losses = th.square(score + z / std[:, None])
             losses = reduce_op(losses.reshape(losses.shape[0], -1), dim=-1) * g2
 
-        loss = mean_flat(losses)
-        return {"loss": loss}
+        return {"loss": losses}
 
     def _get_score(self, x, t, model_kwargs=None):
         if isinstance(self.diffusion, VPSDE) or isinstance(self.diffusion, subVPSDE):

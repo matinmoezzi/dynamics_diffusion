@@ -176,11 +176,11 @@ class VPSDE(SDE):
         return f, G
 
     def training_losses(self, model, batch, labels, model_kwargs=None):
-        losses = {}
+        loss = {}
         if model_kwargs is None:
             model_kwargs = {}
         reduce_op = (
-            torch.mean
+            mean_flat
             if self.reduce_mean
             else lambda *args, **kwargs: 0.5 * torch.sum(*args, **kwargs)
         )
@@ -189,15 +189,14 @@ class VPSDE(SDE):
         sqrt_1m_alphas_cumprod = self.sqrt_1m_alphas_cumprod.to(batch.device)
         noise = torch.randn_like(batch)
         perturbed_data = (
-            sqrt_alphas_cumprod[labels, None, None, None] * batch
-            + sqrt_1m_alphas_cumprod[labels, None, None, None] * noise
+            sqrt_alphas_cumprod[labels, None] * batch
+            + sqrt_1m_alphas_cumprod[labels, None] * noise
         )
         score = model(perturbed_data, labels, **model_kwargs)
         losses = torch.square(score - noise)
         losses = reduce_op(losses.reshape(losses.shape[0], -1), dim=-1)
-        loss = mean_flat(losses)
-        losses["loss"] = loss
-        return losses
+        loss["loss"] = losses
+        return loss
 
 
 class subVPSDE(SDE):
@@ -304,12 +303,12 @@ class VESDE(SDE):
         return f, G
 
     def training_losses(self, model, batch, labels, model_kwargs=None):
-        losses = {}
+        loss = {}
         if model_kwargs is None:
             model_kwargs = {}
         smld_sigma_array = torch.flip(self.discrete_sigmas, dims=(0,))
         reduce_op = (
-            torch.mean
+            mean_flat
             if self.reduce_mean
             else lambda *args, **kwargs: 0.5 * torch.sum(*args, **kwargs)
         )
@@ -321,6 +320,5 @@ class VESDE(SDE):
         target = -noise / (sigmas**2)[:, None]
         losses = torch.square(score - target)
         losses = reduce_op(losses.reshape(losses.shape[0], -1), dim=-1) * sigmas**2
-        loss = mean_flat(losses)
-        losses["loss"] = loss
-        return losses
+        loss["loss"] = losses
+        return loss
