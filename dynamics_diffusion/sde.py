@@ -2,7 +2,12 @@
 import abc
 import torch
 import numpy as np
-from dynamics_diffusion.nn import mean_flat
+
+
+def _expand_tensor_shape(x, shape):
+    while len(x.shape) < len(shape):
+        x = x[..., None]
+    return x
 
 
 class SDE(abc.ABC):
@@ -96,9 +101,9 @@ class SDE(abc.ABC):
                 """Create the drift and diffusion functions for the reverse SDE/ODE."""
                 drift, diffusion = sde_fn(x, t)
                 score = score_fn(x, t)
-                drift = drift - diffusion[:, None] ** 2 * score * (
-                    0.5 if self.probability_flow else 1.0
-                )
+                drift = drift - _expand_tensor_shape(
+                    diffusion, score.shape
+                ) ** 2 * score * (0.5 if self.probability_flow else 1.0)
                 # Set the diffusion function to zero for ODEs.
                 diffusion = 0.0 if self.probability_flow else diffusion
                 return drift, diffusion
@@ -106,7 +111,7 @@ class SDE(abc.ABC):
             def discretize(self, x, t):
                 """Create discretized iteration rules for the reverse diffusion sampler."""
                 f, G = discretize_fn(x, t)
-                rev_f = f - G[:, None] ** 2 * score_fn(x, t) * (
+                rev_f = f - _expand_tensor_shape(G, x.shape) ** 2 * score_fn(x, t) * (
                     0.5 if self.probability_flow else 1.0
                 )
                 rev_G = torch.zeros_like(G) if self.probability_flow else G
@@ -144,7 +149,7 @@ class VPSDE(SDE):
 
     def sde(self, x, t):
         beta_t = self.beta_0 + t * (self.beta_1 - self.beta_0)
-        drift = -0.5 * beta_t[:, None] * x
+        drift = -0.5 * _expand_tensor_shape(beta_t, x.shape) * x
         diffusion = torch.sqrt(beta_t)
         return drift, diffusion
 
@@ -152,7 +157,7 @@ class VPSDE(SDE):
         log_mean_coeff = (
             -0.25 * t**2 * (self.beta_1 - self.beta_0) - 0.5 * t * self.beta_0
         )
-        mean = torch.exp(log_mean_coeff[:, None]) * x
+        mean = torch.exp(_expand_tensor_shape(log_mean_coeff, x.shape)) * x
         std = torch.sqrt(1.0 - torch.exp(2.0 * log_mean_coeff))
         return mean, std
 
@@ -171,7 +176,7 @@ class VPSDE(SDE):
         beta = self.discrete_betas.to(x.device)[timestep]
         alpha = self.alphas.to(x.device)[timestep]
         sqrt_beta = torch.sqrt(beta)
-        f = torch.sqrt(alpha)[:, None] * x - x
+        f = _expand_tensor_shape(torch.sqrt(alpha), x.shape) * x - x
         G = sqrt_beta
         return f, G
 
@@ -180,7 +185,7 @@ class VPSDE(SDE):
         if model_kwargs is None:
             model_kwargs = {}
         reduce_op = (
-            mean_flat
+            torch.mean
             if self.reduce_mean
             else lambda *args, **kwargs: 0.5 * torch.sum(*args, **kwargs)
         )
@@ -189,8 +194,7 @@ class VPSDE(SDE):
         sqrt_1m_alphas_cumprod = self.sqrt_1m_alphas_cumprod.to(batch.device)
         noise = torch.randn_like(batch)
         perturbed_data = (
-            sqrt_alphas_cumprod[labels, None] * batch
-            + sqrt_1m_alphas_cumprod[labels, None] * noise
+            sqrt_alphas_cumprod[labels] * batch + sqrt_1m_alphas_cumprod[labels] * noise
         )
         score = model(perturbed_data, labels, **model_kwargs)
         losses = torch.square(score - noise)
@@ -220,7 +224,7 @@ class subVPSDE(SDE):
 
     def sde(self, x, t):
         beta_t = self.beta_0 + t * (self.beta_1 - self.beta_0)
-        drift = -0.5 * beta_t[:, None] * x
+        drift = -0.5 * _expand_tensor_shape(beta_t, x.shape) * x
         discount = 1.0 - torch.exp(
             -2 * self.beta_0 * t - (self.beta_1 - self.beta_0) * t**2
         )
@@ -231,7 +235,7 @@ class subVPSDE(SDE):
         log_mean_coeff = (
             -0.25 * t**2 * (self.beta_1 - self.beta_0) - 0.5 * t * self.beta_0
         )
-        mean = torch.exp(log_mean_coeff)[:, None] * x
+        mean = _expand_tensor_shape(torch.exp(log_mean_coeff), x.shape) * x
         std = 1 - torch.exp(2.0 * log_mean_coeff)
         return mean, std
 
@@ -242,6 +246,9 @@ class subVPSDE(SDE):
         shape = z.shape
         N = np.prod(shape[1:])
         return -N / 2.0 * np.log(2 * np.pi) - torch.sum(z**2, dim=(1, 2, 3)) / 2.0
+
+    def training_losses(self, model, batch, labels, model_kwargs=None):
+        raise NotImplementedError
 
 
 class VESDE(SDE):
@@ -308,16 +315,16 @@ class VESDE(SDE):
             model_kwargs = {}
         smld_sigma_array = torch.flip(self.discrete_sigmas, dims=(0,))
         reduce_op = (
-            mean_flat
+            torch.mean
             if self.reduce_mean
             else lambda *args, **kwargs: 0.5 * torch.sum(*args, **kwargs)
         )
 
         sigmas = smld_sigma_array.to(batch.device)
-        noise = torch.randn_like(batch) * sigmas[:, None]
+        noise = torch.randn_like(batch) * _expand_tensor_shape(sigmas, batch.shape)
         perturbed_data = noise + batch
         score = model(perturbed_data, labels, **model_kwargs)
-        target = -noise / (sigmas**2)[:, None]
+        target = -noise / _expand_tensor_shape((sigmas**2), noise.shape)
         losses = torch.square(score - target)
         losses = reduce_op(losses.reshape(losses.shape[0], -1), dim=-1) * sigmas**2
         loss["loss"] = losses

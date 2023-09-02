@@ -27,6 +27,12 @@ from dynamics_diffusion import dist_util
 from dynamics_diffusion.sde import *
 
 
+def _expand_tensor_shape(x, shape):
+    while len(x.shape) < len(shape):
+        x = x[..., None]
+    return x
+
+
 def get_model_fn(model, train=False):
     """Create a function to give the output of the score-based model.
 
@@ -92,7 +98,7 @@ def get_score_fn(sde, model, model_kwargs, train=False, continuous=False):
                 score = model_fn(x, labels, model_kwargs)
                 std = sde.sqrt_1m_alphas_cumprod.to(labels.device)[labels.long()]
 
-            score = -score / std[:, None]
+            score = -score / _expand_tensor_shape(std, score.shape)
             return score
 
     elif isinstance(sde, VESDE):
@@ -293,7 +299,7 @@ class EulerMaruyamaPredictor(Predictor):
         z = torch.randn_like(x)
         drift, diffusion = self.rsde.sde(x, t)
         x_mean = x + drift * dt
-        x = x_mean + diffusion[:, None] * np.sqrt(-dt) * z
+        x = x_mean + _expand_tensor_shape(diffusion, x_mean.shape) * np.sqrt(-dt) * z
         return x, x_mean
 
 
@@ -306,7 +312,7 @@ class ReverseDiffusionPredictor(Predictor):
         f, G = self.rsde.discretize(x, t)
         z = torch.randn_like(x)
         x_mean = x - f
-        x = x_mean + G[:, None] * z
+        x = x_mean + _expand_tensor_shape(G, z.shape) * z
         return x, x_mean
 
 
@@ -334,12 +340,14 @@ class AncestralSamplingPredictor(Predictor):
             sde.discrete_sigmas.to(t.device)[timestep - 1],
         )
         score = self.score_fn(x, t)
-        x_mean = x + score * (sigma**2 - adjacent_sigma**2)[:, None]
+        x_mean = x + score * _expand_tensor_shape(
+            (sigma**2 - adjacent_sigma**2), score.shape
+        )
         std = torch.sqrt(
             (adjacent_sigma**2 * (sigma**2 - adjacent_sigma**2)) / (sigma**2)
         )
         noise = torch.randn_like(x)
-        x = x_mean + std[:, None] * noise
+        x = x_mean + _expand_tensor_shape(std, x_mean.shape) * noise
         return x, x_mean
 
     def vpsde_update_fn(self, x, t):
@@ -347,11 +355,11 @@ class AncestralSamplingPredictor(Predictor):
         timestep = (t * (sde.N - 1) / sde.T).long()
         beta = sde.discrete_betas.to(t.device)[timestep]
         score = self.score_fn(x, t)
-        x_mean = (x + beta[:, None] * score) / torch.sqrt(1.0 - beta)[
-            :, None, None, None
-        ]
+        x_mean = (x + _expand_tensor_shape(beta, score.shape) * score) / torch.sqrt(
+            1.0 - beta
+        )[:, None, None, None]
         noise = torch.randn_like(x)
-        x = x_mean + torch.sqrt(beta)[:, None] * noise
+        x = x_mean + _expand_tensor_shape(torch.sqrt(beta), x_mean.shape) * noise
         return x, x_mean
 
     def update_fn(self, x, t):
@@ -402,8 +410,11 @@ class LangevinCorrector(Corrector):
             grad_norm = torch.norm(grad.reshape(grad.shape[0], -1), dim=-1).mean()
             noise_norm = torch.norm(noise.reshape(noise.shape[0], -1), dim=-1).mean()
             step_size = (target_snr * noise_norm / grad_norm) ** 2 * 2 * alpha
-            x_mean = x + step_size[:, None] * grad
-            x = x_mean + torch.sqrt(step_size * 2)[:, None] * noise
+            x_mean = x + _expand_tensor_shape(step_size, grad.shape) * grad
+            x = (
+                x_mean
+                + _expand_tensor_shape(torch.sqrt(step_size * 2), noise.shape) * noise
+            )
 
         return x, x_mean
 
@@ -443,8 +454,10 @@ class AnnealedLangevinDynamics(Corrector):
             grad = score_fn(x, t)
             noise = torch.randn_like(x)
             step_size = (target_snr * std) ** 2 * 2 * alpha
-            x_mean = x + step_size[:, None] * grad
-            x = x_mean + noise * torch.sqrt(step_size * 2)[:, None]
+            x_mean = x + _expand_tensor_shape(step_size, grad.shape) * grad
+            x = x_mean + noise * _expand_tensor_shape(
+                torch.sqrt(step_size * 2), noise.shape
+            )
 
         return x, x_mean
 

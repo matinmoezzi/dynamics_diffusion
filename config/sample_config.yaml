@@ -3,7 +3,7 @@ num_samples: 100
 batch_size: 16
 use_ema: False
 clip_denoised: False
-use_ddim: False
+use_ddim: True
 cm_sampler:
   generator: "determ"
   sampler: "heun"

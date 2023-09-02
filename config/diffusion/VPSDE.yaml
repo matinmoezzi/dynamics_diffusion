@@ -4,4 +4,4 @@ target:
   beta_min: 0.1
   beta_max: 20
   N: 1000
-  reduce_mean: False
+  reduce_mean: True

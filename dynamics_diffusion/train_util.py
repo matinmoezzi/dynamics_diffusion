@@ -1,6 +1,7 @@
 import copy
 import functools
 import os
+from pathlib import Path
 
 import blobfile as bf
 import torch as th
@@ -28,6 +29,12 @@ from .fp16_util import (
 # We found that the lg_loss_scale quickly climbed to
 # 20-21 within the first ~1K steps of training.
 INITIAL_LOG_LOSS_SCALE = 20.0
+
+
+def _expand_tensor_shape(x, shape):
+    while len(x.shape) < len(shape):
+        x = x[..., None]
+    return x
 
 
 class TrainLoop:
@@ -131,7 +138,7 @@ class TrainLoop:
             self.ddp_model = self.model
 
     def _load_and_sync_parameters(self):
-        resume_checkpoint = find_resume_checkpoint() or self.resume_checkpoint
+        resume_checkpoint = self._find_resume_checkpoint() or self.resume_checkpoint
 
         if resume_checkpoint:
             self.resume_step = parse_resume_step_from_filename(resume_checkpoint)
@@ -145,10 +152,19 @@ class TrainLoop:
 
         dist_util.sync_params(self.model.parameters())
 
+    def _find_resume_checkpoint(self):
+        # On your infrastructure, you may want to override this to automatically
+        # discover the latest checkpoint on your blob storage, etc.
+        train_path = Path(self.resume_checkpoint, "train")
+        if train_path.is_dir():
+            list_models = list(train_path.glob("model*.pt"))
+            return str(max(list_models, key=os.path.getctime))
+        return None
+
     def _load_ema_parameters(self, rate):
         ema_params = copy.deepcopy(self.mp_trainer.master_params)
 
-        main_checkpoint = find_resume_checkpoint() or self.resume_checkpoint
+        main_checkpoint = self._find_resume_checkpoint() or self.resume_checkpoint
         ema_checkpoint = find_ema_checkpoint(main_checkpoint, self.resume_step, rate)
         if ema_checkpoint:
             if dist.get_rank() == 0:
@@ -162,7 +178,7 @@ class TrainLoop:
         return ema_params
 
     def _load_optimizer_state(self):
-        main_checkpoint = find_resume_checkpoint() or self.resume_checkpoint
+        main_checkpoint = self._find_resume_checkpoint() or self.resume_checkpoint
         opt_checkpoint = bf.join(
             bf.dirname(main_checkpoint), f"opt{self.resume_step:06}.pt"
         )
@@ -181,7 +197,15 @@ class TrainLoop:
         # ):
 
         # Run for a finite amount of iterations
-        for _ in trange(self.total_training_steps):
+        assert (
+            self.total_training_steps > self.resume_step
+        ), "total_training_steps must be greater than resume_step"
+        for _ in trange(
+            self.resume_step,
+            self.total_training_steps,
+            initial=self.resume_step,
+            total=self.total_training_steps,
+        ):
             if not (
                 not self.lr_anneal_steps
                 or self.step + self.resume_step < self.lr_anneal_steps
@@ -352,12 +376,6 @@ def get_blob_logdir():
     return logger.get_dir()
 
 
-def find_resume_checkpoint():
-    # On your infrastructure, you may want to override this to automatically
-    # discover the latest checkpoint on your blob storage, etc.
-    return None
-
-
 def find_ema_checkpoint(main_checkpoint, step, rate):
     if main_checkpoint is None:
         return None
@@ -472,12 +490,16 @@ class CMTrainLoop(TrainLoop):
 
     def run_loop(self):
         saved = False
-        # while (
-        #     not self.lr_anneal_steps
-        #     or self.step < self.lr_anneal_steps
-        #     or self.global_step < self.total_training_steps
-        # ):
-        for _ in trange(self.total_training_steps):
+
+        assert (
+            self.total_training_steps > self.resume_step
+        ), "total_training_steps must be greater than resume_step"
+        for _ in trange(
+            self.resume_step,
+            self.total_training_steps,
+            initial=self.resume_step,
+            total=self.total_training_steps,
+        ):
             if not (
                 not self.lr_anneal_steps
                 or self.step < self.lr_anneal_steps
@@ -495,9 +517,6 @@ class CMTrainLoop(TrainLoop):
                 self.save()
                 saved = True
                 th.cuda.empty_cache()
-                # Run for a finite amount of time in integration tests.
-                if os.environ.get("DIFFUSION_TRAINING_TEST", "") and self.step > 0:
-                    return
 
             if self.global_step % self.log_interval == 0:
                 logger.dumpkvs()
@@ -769,7 +788,7 @@ class SDETrainLoop(TrainLoop):
 
     def _continuous_loss(self, batch, t, model_kwargs):
         reduce_op = (
-            mean_flat
+            th.mean
             if self.diffusion.reduce_mean
             else lambda *args, **kwargs: 0.5 * th.sum(*args, **kwargs)
         )
@@ -777,15 +796,15 @@ class SDETrainLoop(TrainLoop):
         z = th.randn_like(batch)
 
         mean, std = self.diffusion.marginal_prob(batch, t)
-        perturbed_data = mean + std[:, None] * z
+        perturbed_data = mean + _expand_tensor_shape(std, z.shape) * z
         score = self._get_score(perturbed_data, t, model_kwargs)
 
         if not self.likelihood_weighting:
-            losses = th.square(score * std[:, None] + z)
+            losses = th.square(score * _expand_tensor_shape(std, z.shape) + z)
             losses = reduce_op(losses.reshape(losses.shape[0], -1), dim=-1)
         else:
             g2 = self.diffusion.sde(th.zeros_like(batch), t)[1] ** 2
-            losses = th.square(score + z / std[:, None])
+            losses = th.square(score + z / _expand_tensor_shape(std, score.shape))
             losses = reduce_op(losses.reshape(losses.shape[0], -1), dim=-1) * g2
 
         return {"loss": losses}
@@ -807,7 +826,7 @@ class SDETrainLoop(TrainLoop):
                     labels.long()
                 ]
 
-            score = -score / std[:, None]
+            score = -score / _expand_tensor_shape(std, score.shape)
             return score
 
         elif isinstance(self.diffusion, VESDE):

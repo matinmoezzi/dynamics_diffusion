@@ -6,6 +6,7 @@ Trainer options are specified in the config file: DDPM, CM, and SDE
 import hydra
 
 from dynamics_diffusion import dist_util, logger
+from dynamics_diffusion.image_datasets import load_data
 from dynamics_diffusion.resample import create_named_schedule_sampler
 from dynamics_diffusion.script_util import create_ema_and_scales_fn
 from dynamics_diffusion.train_util import CMTrainLoop, SDETrainLoop, TrainLoop
@@ -18,25 +19,28 @@ class Trainer:
         self.model_cfg = model
         self.diffusion_cfg = diffusion
         self.kwargs = kwargs
+        self.cfg = cfg
 
         logger.log("creating data loader...")
-
-        self.data, self.info = get_d4rl_dataset(
-            cfg.env.name,
-            kwargs["batch_size"],
-            cfg.env.deterministic_loader,
-            cfg.env.reward_tune,
-        )
-
-        self.state_dim = self.info["state_dim"]
-        self.action_dim = self.info["action_dim"]
-        self.cond_dim = self.state_dim + self.action_dim
+        self.create_data()
 
         logger.log("creating model and diffusion...")
         self.create_model(
             self.model_cfg, state_dim=self.state_dim, cond_dim=self.cond_dim
         )
         self.create_diffusion(self.diffusion_cfg)
+
+    def create_data(self):
+        self.data, self.info = get_d4rl_dataset(
+            self.cfg.env.name,
+            self.kwargs["batch_size"],
+            self.cfg.env.deterministic_loader,
+            self.cfg.env.reward_tune,
+        )
+
+        self.state_dim = self.info["state_dim"]
+        self.action_dim = self.info["action_dim"]
+        self.cond_dim = self.state_dim + self.action_dim
 
     def create_model(self, model_cfg, state_dim, cond_dim):
         raise NotImplementedError
@@ -208,6 +212,73 @@ class SDETrainer(Trainer):
         SDETrainLoop(
             score_model=self.model,
             sde=self.diffusion,
+            data=self.data,
+            **self.kwargs,
+        ).run_loop()
+
+
+class ImageTrainer:
+    def __init__(self, cfg, model, diffusion, data_dir, **kwargs) -> None:
+        self.model_cfg = model
+        self.diffusion_cfg = diffusion
+        self.kwargs = kwargs
+        self.cfg = cfg
+        self.data_dir = data_dir
+
+        logger.log("creating data loader...")
+        self.create_data()
+
+        logger.log("creating model and diffusion...")
+        self.create_model(self.model_cfg)
+        self.create_diffusion(self.diffusion_cfg)
+
+    def create_data(self):
+        self.data = load_data(
+            data_dir=self.data_dir,
+            batch_size=self.kwargs["batch_size"],
+            image_size=self.model_cfg.target.image_size,
+        )
+
+    def create_model(self, model_cfg):
+        self.model = hydra.utils.instantiate(model_cfg.target)
+        self.model.to(dist_util.dev())
+        self.model.train()
+
+    def create_diffusion(self, diffusion_cfg):
+        self.diffusion = hydra.utils.instantiate(diffusion_cfg.target)
+
+    def run(self):
+        logger.log("training...")
+        self._run()
+
+    def _run(self):
+        raise NotImplementedError
+
+
+class SDEImageTrainer(ImageTrainer):
+    def __init__(self, cfg, model, diffusion, **kwargs) -> None:
+        super().__init__(cfg, model, diffusion, **kwargs)
+
+    def _run(self):
+        SDETrainLoop(
+            score_model=self.model,
+            sde=self.diffusion,
+            data=self.data,
+            **self.kwargs,
+        ).run_loop()
+
+
+class DDPMImageTrainer(ImageTrainer):
+    def __init__(self, cfg, model, diffusion, schedule_sampler, **kwargs) -> None:
+        super().__init__(cfg, model, diffusion, **kwargs)
+        self.schedule_sampler = create_named_schedule_sampler(
+            schedule_sampler, self.diffusion
+        )
+
+    def _run(self):
+        TrainLoop(
+            model=self.model,
+            diffusion=self.diffusion,
             data=self.data,
             **self.kwargs,
         ).run_loop()
