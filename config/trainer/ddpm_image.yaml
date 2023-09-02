@@ -6,12 +6,12 @@ _target_: dynamics_diffusion.trainer_util.DDPMImageTrainer
 _recursive_: False
 data_dir: "/home/matin/data2/dynamics_diffusion/cifar_train"
 total_training_steps: 5e6
-schedule_sampler: "uniform"
+schedule_sampler: "loss-second-moment"
 lr: 1e-4
 weight_decay: 0.0
 lr_anneal_steps: 0
-batch_size: 1
-microbatch: -1  # -1 disables microbatches
+batch_size: 64
+microbatch: 16  # -1 disables microbatches
 ema_rate: "0.9999"  # comma-separated list of EMA values
 log_interval: 100 
 save_interval: 1000
