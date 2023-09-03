@@ -25,8 +25,10 @@ class MLP(nn.Module):
     MLP Model
     """
 
-    def __init__(self, x_dim, cond_dim, t_dim=16):
+    def __init__(self, x_dim, cond_dim, learn_sigma=False, t_dim=16):
         super(MLP, self).__init__()
+
+        self.learn_sigma = learn_sigma
 
         self.time_mlp = nn.Sequential(
             SinusoidalPosEmb(t_dim),
@@ -45,7 +47,12 @@ class MLP(nn.Module):
             nn.Mish(),
         )
 
-        self.final_layer = nn.Linear(256, x_dim)
+        if self.learn_sigma:
+            out_dim = 2 * x_dim
+        else:
+            out_dim = x_dim
+
+        self.final_layer = nn.Linear(256, out_dim)
 
     def forward(self, x, time, state, action):
         t = self.time_mlp(time)

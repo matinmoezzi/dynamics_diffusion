@@ -16,4 +16,3 @@ target:
   resblock_updown: False
   use_fp16: False
   use_new_attention_order: False
-  learn_sigma: True
