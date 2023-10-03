@@ -6,7 +6,6 @@ mpi4py==3.1.4
 numpy==1.25.2
 omegaconf==2.3.0
 Pillow==10.0.0
-Pillow==10.0.0
 piq==0.8.0
 PyYAML==6.0.1
 PyYAML==6.0.1
