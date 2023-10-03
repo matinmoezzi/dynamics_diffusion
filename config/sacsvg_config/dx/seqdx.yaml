@@ -1,0 +1,17 @@
+_target_: sacsvg.dx.SeqDx
+env_name: ${env_name}
+obs_dim: ${obs_dim}
+action_dim: ${action_dim}
+action_range: ${action_range}
+horizon: ${agent.horizon}
+device: ${device}
+detach_xt: true
+xu_enc_hidden_dim: 512
+xu_enc_hidden_depth: 2
+x_dec_hidden_dim: 512
+x_dec_hidden_depth: 0
+clip_grad_norm: 1.0
+rec_type: GRU
+rec_latent_dim: 512
+rec_num_layers: 2
+lr: 1e-3

@@ -3,6 +3,8 @@ import abc
 import torch
 import numpy as np
 
+from dynamics_diffusion.nn import mean_flat
+
 
 def _expand_tensor_shape(x, shape):
     while len(x.shape) < len(shape):
@@ -185,7 +187,7 @@ class VPSDE(SDE):
         if model_kwargs is None:
             model_kwargs = {}
         reduce_op = (
-            torch.mean
+            mean_flat
             if self.reduce_mean
             else lambda *args, **kwargs: 0.5 * torch.sum(*args, **kwargs)
         )
@@ -194,7 +196,9 @@ class VPSDE(SDE):
         sqrt_1m_alphas_cumprod = self.sqrt_1m_alphas_cumprod.to(batch.device)
         noise = torch.randn_like(batch)
         perturbed_data = (
-            sqrt_alphas_cumprod[labels] * batch + sqrt_1m_alphas_cumprod[labels] * noise
+            sqrt_alphas_cumprod[labels][(...,) + (None,) * len(batch.shape[1:])] * batch
+            + sqrt_1m_alphas_cumprod[labels][(...,) + (None,) * len(batch.shape[1:])]
+            * noise
         )
         score = model(perturbed_data, labels, **model_kwargs)
         losses = torch.square(score - noise)
@@ -303,7 +307,9 @@ class VESDE(SDE):
         timestep = (t * (self.N - 1) / self.T).long()
         sigma = self.discrete_sigmas.to(t.device)[timestep]
         adjacent_sigma = torch.where(
-            timestep == 0, torch.zeros_like(t), self.discrete_sigmas[timestep - 1]
+            timestep == 0,
+            torch.zeros_like(t),
+            self.discrete_sigmas.to(t.device)[timestep - 1],
         )
         f = torch.zeros_like(x)
         G = torch.sqrt(sigma**2 - adjacent_sigma**2)
@@ -315,7 +321,7 @@ class VESDE(SDE):
             model_kwargs = {}
         smld_sigma_array = torch.flip(self.discrete_sigmas, dims=(0,))
         reduce_op = (
-            torch.mean
+            mean_flat
             if self.reduce_mean
             else lambda *args, **kwargs: 0.5 * torch.sum(*args, **kwargs)
         )

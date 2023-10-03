@@ -112,7 +112,7 @@ def get_score_fn(sde, model, model_kwargs, train=False, continuous=False):
                 labels *= sde.N - 1
                 labels = torch.round(labels).long()
 
-            score = model_fn(x, labels)
+            score = model_fn(x, labels, model_kwargs=model_kwargs)
             return score
 
     else:
@@ -184,7 +184,14 @@ def get_corrector(name):
 
 
 def get_sampling_fn(
-    config, sde, shape, inverse_scaler, eps, continuous, model_kwargs=None
+    config,
+    sde,
+    shape,
+    inverse_scaler,
+    eps,
+    continuous,
+    device="cuda",
+    model_kwargs=None,
 ):
     """Create a sampling function.
 
@@ -211,7 +218,7 @@ def get_sampling_fn(
             inverse_scaler=inverse_scaler,
             denoise=config.noise_removal,
             eps=eps,
-            device=dist_util.dev(),
+            device=device,
             model_kwargs=model_kwargs,
         )
     # Predictor-Corrector sampling. Predictor-only and Corrector-only samplers are special cases.
@@ -230,7 +237,7 @@ def get_sampling_fn(
             continuous=continuous,
             denoise=config.noise_removal,
             eps=eps,
-            device=dist_util.dev(),
+            device=device,
             model_kwargs=model_kwargs,
         )
     else:

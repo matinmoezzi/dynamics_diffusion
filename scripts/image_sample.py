@@ -1,88 +1,157 @@
+from datetime import datetime
 import os
 from functools import partial
 from pathlib import Path
 import pathlib
 import time
-import blobfile as bf
-from omegaconf import DictConfig, OmegaConf
-from hydra.core.hydra_config import HydraConfig
+from omegaconf import OmegaConf
 import hydra
 import numpy as np
 import torch as th
 import torch.distributed as dist
-from tqdm import trange
-import yaml
-from PIL import Image
 
 from dynamics_diffusion import dist_util, logger, sde_sampling
-from torchvision.utils import make_grid, save_image
 from dynamics_diffusion.karras_diffusion import karras_sample
 from dynamics_diffusion.random_util import get_generator
 from dynamics_diffusion.sde import VESDE
+import matplotlib.pyplot as plt
+
+NUM_CLASSES = 1000
 
 
-def load_yaml_file(file_path: str):
-    with open(file_path, "r") as f:
-        return yaml.safe_load(f)
+def image_grid(x, image_size=32, num_channels=3):
+    size = image_size
+    channels = num_channels
+    img = x.reshape(-1, size, size, channels)
+    w = int(np.sqrt(img.shape[0]))
+    img = (
+        img.reshape((w, w, size, size, channels))
+        .transpose((0, 2, 1, 3, 4))
+        .reshape((w * size, w * size, channels))
+    )
+    return img
 
 
-OmegaConf.register_new_resolver("load_yaml", load_yaml_file)
+def show_samples(x):
+    x = x.permute(0, 2, 3, 1).detach().cpu().numpy()
+    img = image_grid(x)
+    plt.figure(figsize=(8, 8))
+    plt.axis("off")
+    plt.imshow(img)
+    plt.show()
 
 
-@hydra.main(version_base=None, config_path="../config", config_name="sample_config")
-def main(cfg: DictConfig):
-    assert Path(cfg.model_dir, ".hydra").is_dir(), "Hydra configuration not found."
+def main():
+    abs_path = Path(__file__).parent
+    cfg = OmegaConf.load(abs_path / "../config/dynamics_config/sample_image.yaml")
+    if cfg.model_dir.split(".")[-1] in ["pt", "pth"]:
+        assert cfg.model_dir is not None or cfg.model_dir != "", "Model not found."
+        model_path = cfg.model_dir
 
-    model_prefix = "ema" if cfg.use_ema else "model"
+        assert (
+            cfg.model_cfg is not None or cfg.model_cfg != ""
+        ), "Model config not found."
+        model_cfg = OmegaConf.load(abs_path / ".." / cfg.model_cfg)
 
-    list_models = list(pathlib.Path(cfg.model_dir, "train").glob(f"{model_prefix}*.pt"))
-    assert list_models, f"No {model_prefix} found."
+        assert (
+            cfg.diffusion_cfg is not None or cfg.diffusion_cfg != ""
+        ), "Diffusion config not found."
+        diffusion_cfg = OmegaConf.load(abs_path / ".." / cfg.diffusion_cfg)
 
-    model_path = max(list_models, key=os.path.getctime)
+        assert cfg.sampler is not None or cfg.sampler != "", "Invalid Sampler."
+        sampler = cfg.sampler
 
-    train_cfg = OmegaConf.load(Path(cfg.model_dir, ".hydra", "config.yaml"))
+        if sampler == "cm":
+            cm_training_mode = cfg.cm_sampler.training_mode
+        if sampler == "sde":
+            continuous = model_cfg.target.config.continuous
 
+    else:
+        assert Path(cfg.model_dir, ".hydra").is_dir(), "Hydra configuration not found."
+
+        model_prefix = "ema" if cfg.use_ema else "model"
+
+        list_models = list(
+            pathlib.Path(cfg.model_dir, "train").glob(f"{model_prefix}*.pt")
+        )
+        assert list_models, f"No {model_prefix} found."
+
+        model_path = max(list_models, key=os.path.getctime)
+
+        train_cfg = OmegaConf.load(Path(cfg.model_dir, ".hydra", "config.yaml"))
+
+        model_cfg = train_cfg.trainer.model
+        diffusion_cfg = train_cfg.trainer.diffusion
+
+        if train_cfg.trainer._target_.split(".")[-1] == "DDPMImageTrainer":
+            sampler = "ddpm"
+        elif train_cfg.trainer._target_.split(".")[-1] == "CMImageTrainer":
+            sampler = "cm"
+            cm_training_mode = train_cfg.trainer.training_mode
+        elif train_cfg.trainer._target_.split(".")[-1] == "SDEImageTrainer":
+            sampler = "sde"
+            continuous = train_cfg.trainer.continuous
+        else:
+            raise NotImplementedError(f"{train_cfg.trainer._target_} not supported.")
+
+    log_dir = abs_path / f"../image_samples/{sampler}/{datetime.now():%Y%m%d-%H%M%S}"
     dist_util.setup_dist()
-    log_dir = Path(HydraConfig.get().run.dir).resolve()
     logger.configure(dir=str(log_dir), format_strs=["stdout"])
 
     logger.log("creating model and diffusion...")
-    model = hydra.utils.instantiate(train_cfg.trainer.model.target)
-    model.load_state_dict(
-        dist_util.load_state_dict(str(model_path), map_location="cpu")
-    )
-    model.to(dist_util.dev())
-    if train_cfg.trainer.use_fp16:
-        model.convert_to_fp16()
-    model.eval()
 
-    is_sde = False
-
-    if train_cfg.trainer._target_.split(".")[-1] == "DDPMImageTrainer":
-        diffusion = hydra.utils.call(train_cfg.trainer.diffusion.target)
-        sample_fn = (
-            diffusion.p_sample_loop if not cfg.use_ddim else diffusion.ddim_sample_loop
+    model = hydra.utils.instantiate(model_cfg.target)
+    if sampler in ["ddpm", "cm"]:
+        model.load_state_dict(
+            dist_util.load_state_dict(str(model_path), map_location="cpu")
         )
 
+        model.to(dist_util.dev())
+
+        if model_cfg.target.use_fp16:
+            model.convert_to_fp16()
+
+        model.eval()
+    elif sampler == "sde":
+        model = th.nn.DataParallel(model)
+        model.to(dist_util.dev())
+        loaded_state = dist_util.load_state_dict(
+            str(model_path), map_location=dist_util.dev()
+        )
+        model.load_state_dict(loaded_state["model"], strict=False)
+
+    model_kwargs = {}
+    if sampler == "ddpm":
+        diffusion = hydra.utils.call(diffusion_cfg.target)
+        sample_fn = (
+            diffusion.p_sample_loop
+            if not cfg.ddpm_sampler.use_ddim
+            else diffusion.ddim_sample_loop
+        )
+        if model_cfg.target.class_cond:
+            classes = th.randint(
+                low=0, high=NUM_CLASSES, size=(cfg.batch_size,), device=dist_util.dev()
+            )
+            model_kwargs["y"] = classes
         sample_fn_wrapper = partial(
             sample_fn,
             model,
             (
                 cfg.batch_size,
                 3,
-                train_cfg.trainer.model.target.image_size,
-                train_cfg.trainer.model.target.image_size,
+                model_cfg.target.image_size,
+                model_cfg.target.image_size,
             ),
             clip_denoised=cfg.clip_denoised,
+            model_kwargs=model_kwargs,
         )
-    elif train_cfg.trainer._target_.split(".")[-1] == "CMImageTrainer":
-        if "consistency" in train_cfg.trainer.training_mode:
+    elif sampler == "cm":
+        assert cm_training_mode is not None, "CM training mode not found."
+        if "consistency" in cm_training_mode:
             distillation = True
         else:
             distillation = False
-        diffusion = hydra.utils.call(
-            train_cfg.trainer.diffusion.target, distillation=distillation
-        )
+        diffusion = hydra.utils.call(diffusion_cfg.target, distillation=distillation)
         if cfg.cm_sampler.sampler == "multistep":
             assert len(cfg.ts) > 0
             ts = tuple(int(x) for x in cfg.ts.split(","))
@@ -91,6 +160,11 @@ def main(cfg: DictConfig):
         generator = get_generator(
             cfg.cm_sampler.generator, cfg.num_samples, cfg.cm_sampler.seed
         )
+        if model_cfg.target.class_cond:
+            classes = th.randint(
+                low=0, high=NUM_CLASSES, size=(cfg.batch_size,), device=dist_util.dev()
+            )
+            model_kwargs["y"] = classes
         sample_fn_wrapper = partial(
             karras_sample,
             diffusion,
@@ -98,34 +172,37 @@ def main(cfg: DictConfig):
             (
                 cfg.batch_size,
                 3,
-                cfg.train_cfg.target.image_size,
-                cfg.train_cfg.target.image_size,
+                model_cfg.target.image_size,
+                model_cfg.target.image_size,
             ),
             steps=cfg.cm_sampler.steps,
             device=dist_util.dev(),
-            clip_denoised=cfg.clip_denoised,
+            clip_denoised=cfg.cm_sampler.clip_denoised,
             sampler=cfg.cm_sampler.sampler,
-            sigma_min=train_cfg.trainer.diffusion.target.sigma_min,
-            sigma_max=train_cfg.trainer.diffusion.target.sigma_max,
+            sigma_min=diffusion_cfg.target.sigma_min,
+            sigma_max=diffusion_cfg.target.sigma_max,
             s_churn=cfg.cm_sampler.s_churn,
             s_tmin=cfg.cm_sampler.s_tmin,
             s_tmax=cfg.cm_sampler.s_tmax,
             s_noise=cfg.cm_sampler.s_noise,
             generator=generator,
             ts=ts,
+            model_kwargs=model_kwargs,
         )
-    elif train_cfg.trainer._target_.split(".")[-1] == "SDEImageTrainer":
-        sde = hydra.utils.instantiate(train_cfg.trainer.diffusion.target)
+    elif sampler == "sde":
+        sde = hydra.utils.instantiate(diffusion_cfg.target)
         sampling_eps = 1e-3
         if isinstance(sde, VESDE):
             sampling_eps = 1e-5
         sampling_shape = (
             cfg.batch_size,
             3,
-            train_cfg.trainer.model.target.image_size,
-            train_cfg.trainer.model.target.image_size,
+            model_cfg.target.config.image_size,
+            model_cfg.target.config.image_size,
         )
-        inverse_scaler = lambda x: x
+        inverse_scaler = (
+            lambda x: (x + 1.0) / 2.0 if model_cfg.target.config.data_centered else x
+        )
         sampling_fn = partial(
             sde_sampling.get_sampling_fn,
             cfg.sde_sampler,
@@ -133,38 +210,28 @@ def main(cfg: DictConfig):
             sampling_shape,
             inverse_scaler,
             sampling_eps,
-            continuous=train_cfg.trainer.continuous,
+            continuous=continuous,
+            device=dist_util.dev(),
         )
-        is_sde = True
     else:
-        raise NotImplementedError(f"{train_cfg.trainer._target_} not supported.")
+        raise NotImplementedError(f"{sampler} not supported.")
 
     logger.log(f"sampling...")
 
     all_samples = []
     start = time.time()
-    # while len(all_samples) * cfg.batch_size < cfg.num_samples:
-    for i in trange(0, cfg.num_samples, cfg.batch_size):
-        model_kwargs = {}
-
-        if is_sde:
-            sample, n = sampling_fn(model_kwargs=model_kwargs)(model)
+    while len(all_samples) * cfg.batch_size < cfg.num_samples:
+        if sampler == "sde":
+            sample, n = sampling_fn()(model)
+            show_samples(sample)
         else:
-            sample = sample_fn_wrapper(model_kwargs=model_kwargs)
-
-        sample = ((sample + 1) * 127.5).clamp(0, 255).to(th.uint8)
-        # sample = sample.permute(0, 2, 3, 1)
-        sample = sample.contiguous()
+            sample = sample_fn_wrapper()
+            sample = ((sample + 1) * 127.5).clamp(0, 255).to(th.uint8)
+            sample = sample.permute(0, 2, 3, 1)
+            sample = sample.contiguous()
 
         gathered_samples = [th.zeros_like(sample) for _ in range(dist.get_world_size())]
         dist.all_gather(gathered_samples, sample)  # gather not supported with NCCL
-
-        samples_arr = th.cat(gathered_samples, dim=0)
-        nrow = int(np.sqrt(samples_arr.shape[0]))
-        image_grid = make_grid(samples_arr, nrow, padding=2)
-        img = Image.fromarray(image_grid.cpu().numpy().transpose((1, 2, 0)))
-        img.save(Path(log_dir, f"sample_{i}.png"))
-
         all_samples.extend([sample.cpu().numpy() for sample in gathered_samples])
 
         logger.log(f"created {len(all_samples) * cfg.batch_size} samples")
@@ -175,9 +242,10 @@ def main(cfg: DictConfig):
     logger.log(f"{cfg.num_samples} sampled in {end - start:.4f} sec")
 
     if dist.get_rank() == 0:
-        out_path = Path(log_dir, f"{cfg.num_samples}samples.npz")
+        shape_str = "x".join([str(x) for x in samples_arr.shape])
+        out_path = os.path.join(logger.get_dir(), f"samples_{shape_str}.npz")
         logger.log(f"saving to {out_path}")
-        np.savez(out_path, sampled_next_states=samples_arr)
+        np.savez(out_path, samples_arr)
 
     dist.barrier()
     logger.log("sampling complete")

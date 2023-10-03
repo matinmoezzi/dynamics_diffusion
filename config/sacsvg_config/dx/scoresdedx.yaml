@@ -1,0 +1,32 @@
+defaults:
+  - /dynamics_config/diffusion@diffusion: VPSDE
+  - /dynamics_config/model@model: MLP
+_target_: sacsvg.diffusion_dx.ScoreSDEDx
+_recursive_: False
+env_name: ${env_name}
+obs_dim: ${obs_dim}
+action_dim: ${action_dim}
+horizon: ${agent.horizon}
+device: ${device}
+detach_xt: true
+
+clip_grad_norm: 1.0
+ema_rate: "0.9999"  # comma-separated list of EMA values
+
+lr: 1e-4
+
+opt_name: "AdamW"
+weight_decay: 0.0
+schedule_sampler: "uniform"
+
+continuous: False
+likelihood_weighting: False
+
+sde_sampler:
+  n_steps_each: 1
+  noise_removal: True
+  probability_flow: False
+  snr: 0.17
+  method: 'pc'
+  predictor: 'euler_maruyama'
+  corrector: 'none'

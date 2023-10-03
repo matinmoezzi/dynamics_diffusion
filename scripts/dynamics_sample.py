@@ -28,7 +28,11 @@ def load_yaml_file(file_path: str):
 OmegaConf.register_new_resolver("load_yaml", load_yaml_file)
 
 
-@hydra.main(version_base=None, config_path="../config", config_name="sample_config")
+@hydra.main(
+    version_base=None,
+    config_path="../config/dynamics_config",
+    config_name="sample_dynamics",
+)
 def main(cfg: DictConfig):
     assert Path(cfg.model_dir, ".hydra").is_dir(), "Hydra configuration not found."
 
@@ -123,6 +127,7 @@ def main(cfg: DictConfig):
             inverse_scaler,
             sampling_eps,
             continuous=train_cfg.trainer.continuous,
+            device=dist_util.dev(),
         )
         is_sde = True
     else:

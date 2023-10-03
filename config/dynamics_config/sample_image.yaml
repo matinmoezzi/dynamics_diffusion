@@ -1,0 +1,43 @@
+# model_dir: "/home/matin/data2/dynamics_diffusion/logs/debug/ddpm_image/gaussian_diffusion/UNet/20231002-191810"
+# model_dir: "/home/matin/data2/guided-diffusion/lsun_bedroom.pt"
+# model_dir: "/home/matin/data2/dynamics_diffusion/ct_bedroom256.pt"
+model_dir: "/home/matin/data2/score_sde_pytorch/exp/ve/cifar10_ncsnpp_continuous/checkpoint_24.pth"
+
+model_cfg: "config/dynamics_config/model/NCSNpp.yaml"
+
+diffusion_cfg: "config/dynamics_config/diffusion/VESDE.yaml"
+
+sampler: "sde"
+
+num_samples: 64
+
+batch_size: 64
+
+use_ema: False
+
+ddpm_sampler:
+  use_ddim: True
+  clip_denoised: False
+
+cm_sampler:
+  generator: "determ-indiv"
+  sampler: "onestep"
+  s_churn: 0.0
+  s_tmin: 0.0
+  s_tmax: .inf
+  s_noise: 1.0
+  steps: 40
+  seed: 42
+  ts: ""
+  training_mode: "consistency_distillation"
+  clip_denoised: False
+
+sde_sampler:
+  n_steps_each: 1
+  noise_removal: True
+  probability_flow: False
+  snr: 0.16
+  method: 'pc'
+  predictor: 'reverse_diffusion'
+  corrector: 'langevin'
+  continuous: True

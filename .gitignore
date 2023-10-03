@@ -165,3 +165,6 @@ samples
 
 cifar_train
 cifar_test
+
+*.pt
+*.pth

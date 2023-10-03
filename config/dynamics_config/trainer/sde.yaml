@@ -9,7 +9,7 @@ continuous: False
 likelihood_weighting: False
 
 total_training_steps: 1e6
-batch_size: 1
+batch_size: 16
 microbatch: -1  # -1 disables microbatches
 
 opt_name: "Adam"

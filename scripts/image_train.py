@@ -12,7 +12,9 @@ from dynamics_diffusion import dist_util, logger
 
 
 @hydra.main(
-    version_base=None, config_path="../config", config_name="image_train_config.yaml"
+    version_base=None,
+    config_path="../config/dynamics_config",
+    config_name="train_image.yaml",
 )
 def main(cfg: DictConfig):
     log_dir = Path(HydraConfig.get().run.dir, "train").resolve()

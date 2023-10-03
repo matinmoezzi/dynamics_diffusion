@@ -21,7 +21,11 @@ def sde_continuous_solver(node):
 OmegaConf.register_new_resolver("sde_continuous_solver", sde_continuous_solver)
 
 
-@hydra.main(version_base=None, config_path="../config", config_name="train_config.yaml")
+@hydra.main(
+    version_base=None,
+    config_path="../config/dynamics_config",
+    config_name="train_dynamics.yaml",
+)
 def main(cfg: DictConfig):
     log_dir = Path(HydraConfig.get().run.dir, "train").resolve()
     dist_util.setup_dist()

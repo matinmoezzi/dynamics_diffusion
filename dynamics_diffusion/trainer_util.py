@@ -62,9 +62,9 @@ class DDPMTrainer(Trainer):
         self.schedule_sampler = create_named_schedule_sampler(
             schedule_sampler, self.diffusion
         )
-        self.learn_sigma = self.diffusion_cfg.target.learn_sigma
 
     def create_model(self, model_cfg, state_dim, cond_dim):
+        self.learn_sigma = self.diffusion_cfg.target.learn_sigma
         self.model = hydra.utils.instantiate(
             model_cfg.target, state_dim, cond_dim, learn_sigma=self.learn_sigma
         )
@@ -243,7 +243,10 @@ class ImageTrainer:
         )
 
     def create_model(self, model_cfg):
-        self.model = hydra.utils.instantiate(model_cfg.target)
+        self.learn_sigma = self.diffusion_cfg.target.learn_sigma
+        self.model = hydra.utils.instantiate(
+            model_cfg.target, learn_sigma=self.learn_sigma
+        )
         self.model.to(dist_util.dev())
         self.model.train()
 

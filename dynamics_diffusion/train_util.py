@@ -450,7 +450,7 @@ class CMTrainLoop(TrainLoop):
                 self.step = self.global_step % self.lr_anneal_steps
 
     def _load_and_sync_target_parameters(self):
-        resume_checkpoint = find_resume_checkpoint() or self.resume_checkpoint
+        resume_checkpoint = self._find_resume_checkpoint() or self.resume_checkpoint
         if resume_checkpoint:
             path, name = os.path.split(resume_checkpoint)
             target_name = name.replace("model", "target_model")
@@ -469,7 +469,7 @@ class CMTrainLoop(TrainLoop):
         dist_util.sync_params(self.target_model.buffers())
 
     def _load_and_sync_teacher_parameters(self):
-        resume_checkpoint = find_resume_checkpoint() or self.resume_checkpoint
+        resume_checkpoint = self._find_resume_checkpoint() or self.resume_checkpoint
         if resume_checkpoint:
             path, name = os.path.split(resume_checkpoint)
             teacher_name = name.replace("model", "teacher_model")
@@ -487,6 +487,9 @@ class CMTrainLoop(TrainLoop):
 
         dist_util.sync_params(self.teacher_model.parameters())
         dist_util.sync_params(self.teacher_model.buffers())
+
+    def _find_resume_checkpoint(self):
+        return None
 
     def run_loop(self):
         saved = False
@@ -781,9 +784,7 @@ class SDETrainLoop(TrainLoop):
                     losses = compute_losses()
 
             loss = (losses["loss"]).mean()
-            log_loss_dict(
-                self.diffusion, t, {k: v.unsqueeze(0) for k, v in losses.items()}
-            )
+            log_loss_dict(self.diffusion, t, {k: v for k, v in losses.items()})
             self.mp_trainer.backward(loss)
 
     def _continuous_loss(self, batch, t, model_kwargs):

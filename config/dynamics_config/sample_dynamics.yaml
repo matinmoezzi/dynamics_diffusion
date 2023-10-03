@@ -1,0 +1,28 @@
+# model_dir: "/home/matin/data2/dynamics_diffusion/logs/debug/ddpm_image/gaussian_diffusion/UNet/20231002-191810"
+model_dir: "/home/matin/data2/guided-diffusion/lsun_bedroom.pt"
+model_cfg: "config/dynamics_config/model/UNet.yaml"
+diffusion_cfg: "config/dynamics_config/diffusion/gaussian.yaml"
+trainer: "ddpm"
+num_samples: 1
+batch_size: 1
+use_ema: False
+clip_denoised: False
+use_ddim: True
+cm_sampler:
+  generator: "determ"
+  sampler: "heun"
+  s_churn: 0.0
+  s_tmin: 0.0
+  s_tmax: .inf
+  s_noise: 1.0
+  steps: 40
+  seed: 42
+  ts: ""
+sde_sampler:
+  n_steps_each: 1
+  noise_removal: True
+  probability_flow: False
+  snr: 0.17
+  method: 'pc'
+  predictor: 'euler_maruyama'
+  corrector: 'none'

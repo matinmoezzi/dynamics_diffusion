@@ -1,0 +1,11 @@
+defaults:
+  - _self_
+  - env: maze2d-large
+  - trainer: sde
+format_strs:
+  - stdout
+  - torch-tensorboard
+tag: deploy
+hydra:
+  run:
+    dir: ./logs/${tag}/${hydra:runtime.choices.trainer}/${env.name}/${trainer.diffusion.name}${sde_continuous_solver:${trainer}}/${trainer.model.name}/${now:%Y%m%d-%H%M%S}

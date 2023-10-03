@@ -83,7 +83,7 @@ def scale_module(module, scale):
     return module
 
 
-def mean_flat(tensor):
+def mean_flat(tensor, *args, **kwargs):
     """
     Take the mean over all non-batch dimensions.
     """
