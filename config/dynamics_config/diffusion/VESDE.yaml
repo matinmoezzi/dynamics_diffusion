@@ -1,7 +1,5 @@
-name: VESDE
-target:
-  _target_: dynamics_diffusion.sde.VESDE
-  sigma_min: 0.01
-  sigma_max: 50
-  N: 1000
-  reduce_mean: False
+_target_: dynamics_diffusion.sde.VESDE
+sigma_min: 0.01
+sigma_max: 50
+N: 1000
+reduce_mean: False

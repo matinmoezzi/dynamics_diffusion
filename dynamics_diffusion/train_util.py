@@ -2,22 +2,24 @@ import copy
 import functools
 import os
 from pathlib import Path
+import hydra
 
 import blobfile as bf
 import torch as th
 import numpy as np
 import torch.distributed as dist
 from torch.nn.parallel.distributed import DistributedDataParallel as DDP
-from torch.optim import AdamW, RAdam, Adam
-from tqdm import tqdm, trange
-from dynamics_diffusion.nn import mean_flat
+from torch.optim import RAdam
+from tqdm import trange
+from dynamics_diffusion.script_util import ConfigStore, create_ema_and_scales_fn
+from .mlp import MLP
 
 from dynamics_diffusion.sde import SDE, VESDE, VPSDE, subVPSDE
 
 from . import dist_util, logger
 from .fp16_util import MixedPrecisionTrainer
 from .nn import update_ema
-from .resample import LossAwareSampler, UniformSampler
+from .resample import LossAwareSampler, UniformSampler, create_named_schedule_sampler
 
 from .fp16_util import (
     get_param_groups_and_shapes,
@@ -43,7 +45,7 @@ class TrainLoop:
         *,
         model,
         diffusion,
-        data,
+        dataset,
         total_training_steps,
         batch_size,
         microbatch,
@@ -62,9 +64,21 @@ class TrainLoop:
         beta2=0.999,
         eps=1e-8,
     ):
-        self.model = model
+        self.dataset = dataset
         self.diffusion = diffusion
-        self.data = data
+        if isinstance(model, th.nn.Module):
+            self.model = model
+        elif model.name == "MLP":
+            tmp_data = next(self.dataset)
+            assert (
+                "state" in tmp_data[1] and "action" in tmp_data[1]
+            ), "Dataset must have state and action"
+            self.x_dim = tmp_data[1]["state"].shape[1]
+            self.cond_dim = self.x_dim + tmp_data[1]["action"].shape[1]
+            self.model = MLP(self.x_dim, self.cond_dim, learn_sigma=model.learn_sigma)
+
+        self.model.to(dist_util.dev())
+        self.model.train()
         self.batch_size = batch_size
         self.microbatch = microbatch if microbatch > 0 else batch_size
         self.lr = lr
@@ -79,7 +93,10 @@ class TrainLoop:
         self.use_fp16 = use_fp16
         self.fp16_scale_growth = fp16_scale_growth
         if not isinstance(self.diffusion, SDE):
-            self.schedule_sampler = schedule_sampler or UniformSampler(diffusion)
+            schedule_sampler = schedule_sampler or UniformSampler(diffusion)
+            self.schedule_sampler = create_named_schedule_sampler(
+                schedule_sampler, self.diffusion
+            )
         else:
             self.schedule_sampler = schedule_sampler
         self.weight_decay = weight_decay
@@ -136,6 +153,8 @@ class TrainLoop:
                 )
             self.use_ddp = False
             self.ddp_model = self.model
+
+        self.step = self.resume_step
 
     def _load_and_sync_parameters(self):
         resume_checkpoint = self._find_resume_checkpoint() or self.resume_checkpoint
@@ -198,20 +217,17 @@ class TrainLoop:
 
         # Run for a finite amount of iterations
         assert (
-            self.total_training_steps > self.resume_step
-        ), "total_training_steps must be greater than resume_step"
+            self.total_training_steps > self.step
+        ), "total_training_steps must be greater than step"
         for _ in trange(
-            self.resume_step,
+            self.step,
             self.total_training_steps,
-            initial=self.resume_step,
+            initial=self.step,
             total=self.total_training_steps,
         ):
-            if not (
-                not self.lr_anneal_steps
-                or self.step + self.resume_step < self.lr_anneal_steps
-            ):
+            if not (not self.lr_anneal_steps or self.step < self.lr_anneal_steps):
                 break
-            batch, cond = next(self.data)
+            batch, cond = next(self.dataset)
             self.run_step(batch, cond)
             if self.step % self.log_interval == 0:
                 logger.dumpkvs()
@@ -279,8 +295,8 @@ class TrainLoop:
             param_group["lr"] = lr
 
     def log_step(self):
-        logger.logkv("step", self.step + self.resume_step)
-        logger.logkv("samples", (self.step + self.resume_step + 1) * self.global_batch)
+        logger.logkv("step", self.step)
+        logger.logkv("samples", (self.step + 1) * self.global_batch)
 
     def save(self):
         def save_checkpoint(rate, params):
@@ -399,21 +415,82 @@ class CMTrainLoop(TrainLoop):
     def __init__(
         self,
         *,
-        target_model,
-        teacher_model,
-        teacher_diffusion,
+        target_ema_mode,
+        start_ema,
+        scale_mode,
+        start_scales,
+        end_scales,
+        distill_steps_per_iter,
+        teacher_model_path,
+        teacher_dropout,
         training_mode,
-        ema_scale_fn,
         **kwargs,
     ):
         super().__init__(**kwargs)
         self.training_mode = training_mode
-        self.ema_scale_fn = ema_scale_fn
-        self.target_model = target_model
-        self.teacher_model = teacher_model
-        self.teacher_diffusion = teacher_diffusion
 
-        if target_model:
+        self.ema_scale_fn = create_ema_and_scales_fn(
+            target_ema_mode=target_ema_mode,
+            start_ema=start_ema,
+            scale_mode=scale_mode,
+            start_scales=start_scales,
+            end_scales=end_scales,
+            total_steps=self.total_training_steps,
+            distill_steps_per_iter=distill_steps_per_iter,
+        )
+
+        cfg = ConfigStore.get_config()
+        if len(teacher_model_path) > 0:  # path to the teacher score model.
+            logger.log(f"loading the teacher model from {teacher_model_path}")
+            self.teacher_model = hydra.utils.instantiate(
+                cfg.trainer.model, dropout=teacher_dropout, distillation=False
+            )
+            self.teacher_diffusion = hydra.utils.instantiate(cfg.trainer.diffusion)
+
+            self.teacher_model.load_state_dict(
+                dist_util.load_state_dict(teacher_model_path, map_location="cpu"),
+            )
+
+            self.teacher_model.to(dist_util.dev())
+            self.teacher_model.eval()
+
+            for dst, src in zip(self.model.parameters(), teacher_model.parameters()):
+                dst.data.copy_(src.data)
+
+            if self.use_fp16:
+                self.teacher_model.convert_to_fp16()
+
+        else:
+            self.teacher_model = None
+            self.teacher_diffusion = None
+
+        # load the target model for distillation, if path specified.
+
+        if "_target" in cfg.trainer.model:
+            self.target_model = hydra.utils.instantiate(cfg.trainer.model)
+        elif cfg.trainer.model.name == "MLP":
+            assert hasattr(self, "x_dim") and hasattr(
+                self, "cond_dim"
+            ), "x_dim and cond_dim must be defined"
+            self.target_model = MLP(
+                self.x_dim, self.cond_dim, learn_sigma=cfg.trainer.model.learn_sigma
+            )
+        else:
+            raise ValueError(f"Unknown model {cfg.trainer.model.name}")
+
+        self.target_model.to(dist_util.dev())
+        self.target_model.train()
+
+        dist_util.sync_params(self.target_model.parameters())
+        dist_util.sync_params(self.target_model.buffers())
+
+        for dst, src in zip(self.target_model.parameters(), self.model.parameters()):
+            dst.data.copy_(src.data)
+
+        if self.use_fp16:
+            self.target_model.convert_to_fp16()
+
+        if self.target_model:
             self._load_and_sync_target_parameters()
             self.target_model.requires_grad_(False)
             self.target_model.train()
@@ -421,14 +498,11 @@ class CMTrainLoop(TrainLoop):
             self.target_model_param_groups_and_shapes = get_param_groups_and_shapes(
                 self.target_model.named_parameters()
             )
-            if self.use_fp16:
-                self.target_model_master_params = make_master_params(
-                    self.target_model_param_groups_and_shapes
-                )
-            else:
-                self.target_model_master_params = list(self.target_model.parameters())
+            self.target_model_master_params = make_master_params(
+                self.target_model_param_groups_and_shapes
+            )
 
-        if teacher_model:
+        if self.teacher_model:
             self._load_and_sync_teacher_parameters()
             self.teacher_model.requires_grad_(False)
             self.teacher_model.eval()
@@ -436,9 +510,9 @@ class CMTrainLoop(TrainLoop):
         self.global_step = self.step
         if training_mode == "progdist":
             self.target_model.eval()
-            _, scale = ema_scale_fn(self.global_step)
+            _, scale = self.ema_scale_fn(self.global_step)
             if scale == 1 or scale == 2:
-                _, start_scale = ema_scale_fn(0)
+                _, start_scale = self.ema_scale_fn(0)
                 n_normal_steps = int(np.log2(start_scale // 2)) * self.lr_anneal_steps
                 step = self.global_step - n_normal_steps
                 if step != 0:
@@ -488,28 +562,20 @@ class CMTrainLoop(TrainLoop):
         dist_util.sync_params(self.teacher_model.parameters())
         dist_util.sync_params(self.teacher_model.buffers())
 
-    def _find_resume_checkpoint(self):
-        return None
-
     def run_loop(self):
         saved = False
-
         assert (
             self.total_training_steps > self.resume_step
         ), "total_training_steps must be greater than resume_step"
         for _ in trange(
-            self.resume_step,
+            self.global_step,
             self.total_training_steps,
-            initial=self.resume_step,
+            initial=self.step,
             total=self.total_training_steps,
         ):
-            if not (
-                not self.lr_anneal_steps
-                or self.step < self.lr_anneal_steps
-                or self.global_step < self.total_training_steps
-            ):
+            if not (not self.lr_anneal_steps or self.step < self.lr_anneal_steps):
                 break
-            batch, cond = next(self.data)
+            batch, cond = next(self.dataset)
             self.run_step(batch, cond)
             saved = False
             if (
@@ -520,6 +586,9 @@ class CMTrainLoop(TrainLoop):
                 self.save()
                 saved = True
                 th.cuda.empty_cache()
+                # Run for a finite amount of time in integration tests.
+                if os.environ.get("DIFFUSION_TRAINING_TEST", "") and self.step > 0:
+                    return
 
             if self.global_step % self.log_interval == 0:
                 logger.dumpkvs()
@@ -712,17 +781,13 @@ class SDETrainLoop(TrainLoop):
     def __init__(
         self,
         *,
-        score_model,
-        sde,
         warmup,
         grad_clip,
         continuous,
         likelihood_weighting,
         **kwargs,
     ):
-        super().__init__(
-            diffusion=sde, model=score_model, schedule_sampler=None, **kwargs
-        )
+        super().__init__(**kwargs)
         self.warmup = warmup
         self.grad_clip = grad_clip
         self.continuous = continuous

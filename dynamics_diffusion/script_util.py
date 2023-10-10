@@ -148,3 +148,15 @@ def create_ema_and_scales_fn(
         return float(target_ema), int(scales)
 
     return ema_and_scales_fn
+
+
+class ConfigStore:
+    _config = None
+
+    @classmethod
+    def set_config(cls, config):
+        cls._config = config
+
+    @classmethod
+    def get_config(cls):
+        return cls._config

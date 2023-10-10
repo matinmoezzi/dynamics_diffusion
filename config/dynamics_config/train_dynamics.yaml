@@ -1,11 +1,10 @@
 defaults:
   - _self_
-  - env: maze2d-large
   - trainer: sde
 format_strs:
   - stdout
-  - tensorboard
+  # - tensorboard
 tag: deploy
 hydra:
   run:
-    dir: ./logs/${tag}/${hydra:runtime.choices.trainer}/${env.name}/${trainer.diffusion.name}${sde_continuous_solver:${trainer}}/${trainer.model.name}/${now:%Y%m%d-%H%M%S}
+    dir: ./logs/${tag}/${hydra:runtime.choices.trainer}/${get_runtime_choice:dataset}/${get_runtime_choice:diffusion}${sde_continuous_solver:${trainer}}/${get_runtime_choice:model}/${now:%Y%m%d-%H%M%S}

@@ -1,11 +1,11 @@
 defaults:
   - _self_
   - /model: MLP
-  - /diffusion: VPSDE
-_target_: dynamics_diffusion.trainer_util.SDETrainer 
-_recursive_: False
+  - /diffusion: VESDE
+  - /dataset: kitchen-mixed
+_target_: dynamics_diffusion.train_util.SDETrainLoop
 
-continuous: False
+continuous: True
 likelihood_weighting: False
 
 total_training_steps: 1e6

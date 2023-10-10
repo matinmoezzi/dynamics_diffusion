@@ -11,8 +11,8 @@ from torch.utils.data import DataLoader, Dataset
 def load_data(
     *,
     data_dir,
-    batch_size,
     image_size,
+    batch_size,
     class_cond=False,
     deterministic=False,
     random_crop=False,

@@ -2,8 +2,9 @@ defaults:
   - _self_
   - /model: MLP
   - /diffusion: karras
-_target_: dynamics_diffusion.trainer_util.CMTrainer 
-_recursive_: False
+  - /dataset: kitchen-mixed
+_target_: dynamics_diffusion.train_util.CMTrainLoop
+
 teacher_model_path: ""
 teacher_dropout: 0.1
 training_mode: "consistency_distillation"
@@ -27,3 +28,4 @@ save_interval: 100000
 resume_checkpoint: ""
 use_fp16: True
 fp16_scale_growth: 1e-3
+opt_name: "AdamW"

@@ -1,0 +1,5 @@
+_target_: dynamics_diffusion.rl_datasets.d4rl_load_data
+name: maze2d-umaze-v1
+batch_size: ${..batch_size}
+deterministic: True
+reward_tune: null

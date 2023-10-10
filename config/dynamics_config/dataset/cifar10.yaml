@@ -1,0 +1,8 @@
+_target_: dynamics_diffusion.image_datasets.load_data
+data_dir: /home/matin/data2/dynamics_diffusion/cifar_train
+image_size: 32
+batch_size: ${..batch_size}
+class_cond: False
+deterministic: False
+random_crop: False
+random_flip: False

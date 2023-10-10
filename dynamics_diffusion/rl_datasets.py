@@ -34,8 +34,8 @@ def get_env(env_name) -> gym.Env:
     return env
 
 
-def get_d4rl_dataset(env_name, batch_size, deterministic=False, reward_tune=None):
-    env = get_env(env_name)
+def get_d4rl_dataset(name, batch_size, deterministic=False, reward_tune=None):
+    env = get_env(name)
     data = d4rl.qlearning_dataset(env)
     return d4rl_load_data(
         data=data,
@@ -49,7 +49,7 @@ def get_d4rl_dataset(env_name, batch_size, deterministic=False, reward_tune=None
     }
 
 
-def d4rl_load_data(*, data, batch_size, deterministic=False, reward_tune=None):
+def d4rl_load_data(*, name, batch_size, deterministic=False, reward_tune=None):
     """
     Create a generator over (states, actions, next_states, rewards, dones) pairs given a d4rl environment.
 
@@ -58,6 +58,8 @@ def d4rl_load_data(*, data, batch_size, deterministic=False, reward_tune=None):
     :param deterministic: if True, yield results in a deterministic order.
     :param reward_tune: reward tuning type
     """
+    env = get_env(name)
+    data = d4rl.qlearning_dataset(env)
     dataset = D4RLDataset(
         data,
         reward_tune,
