@@ -189,30 +189,6 @@ class TensorBoardOutputFormat(KVWriter):
             self.writer = None
 
 
-class TorchTensorBoardOutputFormat(KVWriter):
-    def __init__(self, log_dir=None) -> None:
-        from torch.utils.tensorboard import SummaryWriter
-
-        self.writer = SummaryWriter(log_dir=log_dir)
-        self.step = 1
-
-    def writekvs(self, kvs):
-        for k, v in kvs.items():
-            self.writer.add_scalar(
-                tag=k,
-                scalar_value=float(v),
-                global_step=self.step,
-                walltime=time.time(),
-            )
-        self.writer.flush()
-        self.step += 1
-
-    def close(self):
-        if self.writer:
-            self.writer.close()
-            self.writer = None
-
-
 def make_output_format(format, ev_dir, log_suffix=""):
     os.makedirs(ev_dir, exist_ok=True)
     if format == "stdout":
@@ -225,8 +201,6 @@ def make_output_format(format, ev_dir, log_suffix=""):
         return CSVOutputFormat(osp.join(ev_dir, "progress%s.csv" % log_suffix))
     elif format == "tensorboard":
         return TensorBoardOutputFormat(osp.join(ev_dir, "tb%s" % log_suffix))
-    elif format == "torch-tensorboard":
-        return TorchTensorBoardOutputFormat(ev_dir)
     else:
         raise ValueError("Unknown format specified: %s" % (format,))
 

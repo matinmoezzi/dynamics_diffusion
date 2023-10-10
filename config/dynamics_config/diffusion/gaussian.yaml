@@ -2,10 +2,10 @@ name: gaussian_diffusion
 target:
   _target_: dynamics_diffusion.script_util.create_gaussian_diffusion 
   learn_sigma: True
-  steps: 1000
-  noise_schedule: "linear"
+  steps: 4000
+  noise_schedule: "cosine"
   timestep_respacing: "1000"
-  use_kl: False
+  use_kl: True
   predict_xstart: False
   rescale_timesteps: False
   rescale_learned_sigmas: False

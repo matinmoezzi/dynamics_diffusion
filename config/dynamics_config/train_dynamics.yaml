@@ -4,7 +4,7 @@ defaults:
   - trainer: sde
 format_strs:
   - stdout
-  - torch-tensorboard
+  - tensorboard
 tag: deploy
 hydra:
   run:

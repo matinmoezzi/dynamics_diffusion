@@ -64,7 +64,7 @@ def main():
         if sampler == "cm":
             cm_training_mode = cfg.cm_sampler.training_mode
         if sampler == "sde":
-            continuous = model_cfg.target.config.continuous
+            continuous = model_cfg.target.continuous
 
     else:
         assert Path(cfg.model_dir, ".hydra").is_dir(), "Hydra configuration not found."
@@ -142,7 +142,7 @@ def main():
                 model_cfg.target.image_size,
                 model_cfg.target.image_size,
             ),
-            clip_denoised=cfg.clip_denoised,
+            clip_denoised=cfg.ddpm_sampler.clip_denoised,
             model_kwargs=model_kwargs,
         )
     elif sampler == "cm":
@@ -197,11 +197,11 @@ def main():
         sampling_shape = (
             cfg.batch_size,
             3,
-            model_cfg.target.config.image_size,
-            model_cfg.target.config.image_size,
+            model_cfg.target.image_size,
+            model_cfg.target.image_size,
         )
         inverse_scaler = (
-            lambda x: (x + 1.0) / 2.0 if model_cfg.target.config.data_centered else x
+            lambda x: (x + 1.0) / 2.0 if model_cfg.target.data_centered else x
         )
         sampling_fn = partial(
             sde_sampling.get_sampling_fn,

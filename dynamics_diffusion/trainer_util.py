@@ -74,7 +74,6 @@ class DDPMTrainer(Trainer):
         self.diffusion = hydra.utils.call(diffusion_cfg.target)
 
     def _run(self):
-        logger.log("training...")
         TrainLoop(
             model=self.model,
             diffusion=self.diffusion,
@@ -243,10 +242,7 @@ class ImageTrainer:
         )
 
     def create_model(self, model_cfg):
-        self.learn_sigma = self.diffusion_cfg.target.learn_sigma
-        self.model = hydra.utils.instantiate(
-            model_cfg.target, learn_sigma=self.learn_sigma
-        )
+        self.model = hydra.utils.instantiate(model_cfg.target)
         self.model.to(dist_util.dev())
         self.model.train()
 

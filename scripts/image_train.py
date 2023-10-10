@@ -19,6 +19,7 @@ from dynamics_diffusion import dist_util, logger
 def main(cfg: DictConfig):
     log_dir = Path(HydraConfig.get().run.dir, "train").resolve()
     dist_util.setup_dist()
+
     logger.configure(dir=str(log_dir), format_strs=cfg.format_strs)
 
     hydra.utils.instantiate(cfg.trainer, cfg=cfg).run()

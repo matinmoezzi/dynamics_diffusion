@@ -1,7 +1,7 @@
-# model_dir: "/home/matin/data2/dynamics_diffusion/logs/debug/ddpm_image/gaussian_diffusion/UNet/20231002-191810"
+model_dir: "/home/matin/data2/dynamics_diffusion/logs/deploy/ddpm_image/gaussian_diffusion/UNet/20231003-201642"
 # model_dir: "/home/matin/data2/guided-diffusion/lsun_bedroom.pt"
 # model_dir: "/home/matin/data2/dynamics_diffusion/ct_bedroom256.pt"
-model_dir: "/home/matin/data2/score_sde_pytorch/exp/ve/cifar10_ncsnpp_continuous/checkpoint_24.pth"
+# model_dir: "/home/matin/data2/score_sde_pytorch/exp/ve/cifar10_ncsnpp_continuous/checkpoint_24.pth"
 
 model_cfg: "config/dynamics_config/model/NCSNpp.yaml"
 

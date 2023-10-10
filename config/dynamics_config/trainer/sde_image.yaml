@@ -1,27 +1,27 @@
 defaults:
   - _self_
-  - /model: UNet
-  - /diffusion: VPSDE
+  - /model: NCSNpp
+  - /diffusion: VESDE
 _target_: dynamics_diffusion.trainer_util.SDEImageTrainer 
 _recursive_: False
 
 data_dir: "/home/matin/data2/dynamics_diffusion/cifar_train"
 
-continuous: False
+continuous: True
 likelihood_weighting: False
 
-total_training_steps: 1e6
-batch_size: 1
+total_training_steps: 5e5
+batch_size: 128 
 microbatch: -1  # -1 disables microbatches
 
 opt_name: "Adam"
-lr: 1e-4
+lr: 2e-4
 weight_decay: 0.0
 lr_anneal_steps: 0
 beta1: 0.9
 eps: 1e-8
-warmup: -1
-grad_clip: -1
+warmup: 5000
+grad_clip: 1
 
 ema_rate: "0.9999"  # comma-separated list of EMA values
 log_interval: 100

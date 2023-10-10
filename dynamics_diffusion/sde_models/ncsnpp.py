@@ -15,6 +15,7 @@
 
 # pylint: skip-file
 
+from omegaconf import OmegaConf
 from . import utils, layers, layerspp, normalization
 import torch.nn as nn
 import functools
@@ -34,37 +35,38 @@ default_initializer = layers.default_init
 class NCSNpp(nn.Module):
     """NCSN++ model"""
 
-    def __init__(self, config):
+    def __init__(self, **kwargs):
         super().__init__()
-        config.model = config
-        self.config = config
-        self.act = act = get_act(config)
-        self.register_buffer("sigmas", torch.tensor(utils.get_sigmas(config)))
+        kwargs = OmegaConf.create(kwargs)
+        kwargs.model = kwargs
+        self.config = kwargs
+        self.act = act = get_act(kwargs)
+        self.register_buffer("sigmas", torch.tensor(utils.get_sigmas(kwargs)))
 
-        self.nf = nf = config.nf
-        ch_mult = tuple(config.ch_mult)
-        self.num_res_blocks = num_res_blocks = config.num_res_blocks
-        self.attn_resolutions = attn_resolutions = tuple(config.attn_resolutions)
-        dropout = config.dropout
-        resamp_with_conv = config.resamp_with_conv
+        self.nf = nf = kwargs.nf
+        ch_mult = tuple(kwargs.ch_mult)
+        self.num_res_blocks = num_res_blocks = kwargs.num_res_blocks
+        self.attn_resolutions = attn_resolutions = tuple(kwargs.attn_resolutions)
+        dropout = kwargs.dropout
+        resamp_with_conv = kwargs.resamp_with_conv
         self.num_resolutions = num_resolutions = len(ch_mult)
         self.all_resolutions = all_resolutions = [
-            config.image_size // (2**i) for i in range(num_resolutions)
+            kwargs.image_size // (2**i) for i in range(num_resolutions)
         ]
 
-        self.conditional = conditional = config.conditional  # noise-conditional
-        fir = config.fir
-        fir_kernel = config.fir_kernel
-        self.skip_rescale = skip_rescale = config.skip_rescale
-        self.resblock_type = resblock_type = config.resblock_type.lower()
-        self.progressive = progressive = config.progressive.lower()
-        self.progressive_input = progressive_input = config.progressive_input.lower()
-        self.embedding_type = embedding_type = config.embedding_type.lower()
-        init_scale = config.init_scale
+        self.conditional = conditional = kwargs.conditional  # noise-conditional
+        fir = kwargs.fir
+        fir_kernel = kwargs.fir_kernel
+        self.skip_rescale = skip_rescale = kwargs.skip_rescale
+        self.resblock_type = resblock_type = kwargs.resblock_type.lower()
+        self.progressive = progressive = kwargs.progressive.lower()
+        self.progressive_input = progressive_input = kwargs.progressive_input.lower()
+        self.embedding_type = embedding_type = kwargs.embedding_type.lower()
+        init_scale = kwargs.init_scale
         assert progressive in ["none", "output_skip", "residual"]
         assert progressive_input in ["none", "input_skip", "residual"]
         assert embedding_type in ["fourier", "positional"]
-        combine_method = config.progressive_combine.lower()
+        combine_method = kwargs.progressive_combine.lower()
         combiner = functools.partial(Combine, method=combine_method)
 
         modules = []
@@ -72,12 +74,12 @@ class NCSNpp(nn.Module):
         if embedding_type == "fourier":
             # Gaussian Fourier features embeddings.
             assert (
-                config.continuous
+                kwargs.continuous
             ), "Fourier features are only used for continuous training."
 
             modules.append(
                 layerspp.GaussianFourierProjection(
-                    embedding_size=nf, scale=config.fourier_scale
+                    embedding_size=nf, scale=kwargs.fourier_scale
                 )
             )
             embed_dim = 2 * nf
@@ -159,7 +161,7 @@ class NCSNpp(nn.Module):
 
         # Downsampling block
 
-        channels = config.num_channels
+        channels = kwargs.num_channels
         if progressive_input != "none":
             input_pyramid_ch = channels
 

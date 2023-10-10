@@ -1,3 +1,4 @@
 name: MLP
 target:
   _target_: dynamics_diffusion.models.MLP
+  learn_sigma: True
