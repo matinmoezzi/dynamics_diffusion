@@ -11,7 +11,7 @@ OmegaConf.register_new_resolver("split", lambda x: x.split(".")[-1])
 
 
 @hydra.main(
-    version_base=None, config_path="../config/sacsvg_config", config_name="train_sacsvg"
+    version_base=None, config_path="../config/sacsvg", config_name="train_sacsvg"
 )
 def main(cfg: DictConfig):
     log_dir = Path(HydraConfig.get().run.dir).resolve()

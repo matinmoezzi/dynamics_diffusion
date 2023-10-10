@@ -30,7 +30,7 @@ OmegaConf.register_new_resolver("load_yaml", load_yaml_file)
 
 @hydra.main(
     version_base=None,
-    config_path="../config/dynamics_config",
+    config_path="../config/dynamics",
     config_name="sample_dynamics",
 )
 def main(cfg: DictConfig):

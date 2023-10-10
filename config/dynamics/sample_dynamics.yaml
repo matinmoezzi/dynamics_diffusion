@@ -1,7 +1,7 @@
 # model_dir: "/home/matin/data2/dynamics_diffusion/logs/debug/ddpm_image/gaussian_diffusion/UNet/20231002-191810"
 model_dir: "/home/matin/data2/guided-diffusion/lsun_bedroom.pt"
-model_cfg: "config/dynamics_config/model/UNet.yaml"
-diffusion_cfg: "config/dynamics_config/diffusion/gaussian.yaml"
+model_cfg: "config/dynamics/model/UNet.yaml"
+diffusion_cfg: "config/dynamics/diffusion/gaussian.yaml"
 trainer: "ddpm"
 num_samples: 1
 batch_size: 1

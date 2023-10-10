@@ -1,6 +1,6 @@
 defaults:
-  - /dynamics_config/diffusion@diffusion: gaussian
-  - /dynamics_config/model@model: MLP
+  - /dynamics/diffusion@diffusion: gaussian
+  - /dynamics/model@model: MLP
 _target_: sacsvg.diffusion_dx.DiffusionDx
 _recursive_: False
 env_name: ${env_name}

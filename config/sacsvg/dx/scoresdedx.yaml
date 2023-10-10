@@ -1,6 +1,6 @@
 defaults:
-  - /dynamics_config/diffusion@diffusion: VPSDE
-  - /dynamics_config/model@model: MLP
+  - /dynamics/diffusion@diffusion: VPSDE
+  - /dynamics/model@model: MLP
 _target_: sacsvg.diffusion_dx.ScoreSDEDx
 _recursive_: False
 env_name: ${env_name}

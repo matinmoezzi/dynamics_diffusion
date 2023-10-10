@@ -43,7 +43,7 @@ def show_samples(x):
 
 def main():
     abs_path = Path(__file__).parent
-    cfg = OmegaConf.load(abs_path / "../config/dynamics_config/sample_image.yaml")
+    cfg = OmegaConf.load(abs_path / "../config/dynamics/sample_image.yaml")
     if cfg.model_dir.split(".")[-1] in ["pt", "pth"]:
         assert cfg.model_dir is not None or cfg.model_dir != "", "Model not found."
         model_path = cfg.model_dir
