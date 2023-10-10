@@ -41,7 +41,7 @@ OmegaConf.register_new_resolver("karras_distillation", karras_distillation)
 @hydra.main(
     version_base=None,
     config_path="../config/dynamics",
-    config_name="train_dynamics.yaml",
+    config_name="train.yaml",
 )
 def main(cfg: DictConfig):
     ConfigStore.set_config(cfg)
