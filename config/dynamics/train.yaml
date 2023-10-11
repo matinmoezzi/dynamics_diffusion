@@ -4,7 +4,6 @@ defaults:
 format_strs:
   - stdout
   - tensorboard
-tag: deploy
 hydra:
   run:
-    dir: ./logs/${tag}/${hydra:runtime.choices.trainer}/${get_runtime_choice:dataset}/${get_runtime_choice:diffusion}${sde_continuous_solver:${trainer}}/${get_runtime_choice:model}/${now:%Y%m%d-%H%M%S}
+    dir: ./logs/${hydra:runtime.choices.trainer}/${get_runtime_choice:dataset}/${get_runtime_choice:diffusion}${sde_continuous_solver:${trainer}}/${get_runtime_choice:model}/${now:%Y%m%d-%H%M%S}
