@@ -65,7 +65,8 @@ class HumanOutputFormat(KVWriter, SeqWriter):
 
         # Write out the data
         suffix = f"GPU{dist.get_rank()}" if dist.is_initialized() else ""
-        dash_len = keywidth + valwidth + 7 + len(suffix)
+        dash_len = keywidth + valwidth + len(suffix)
+        suffix_dashes = "-" * dash_len
         dashes = "-" * (dash_len // 2) + suffix + "-" * (dash_len // 2)
         lines = [dashes]
         for key, val in sorted(key2str.items(), key=lambda kv: kv[0].lower()):
@@ -73,7 +74,7 @@ class HumanOutputFormat(KVWriter, SeqWriter):
                 "| %s%s | %s%s |"
                 % (key, " " * (keywidth - len(key)), val, " " * (valwidth - len(val)))
             )
-        lines.append(dashes)
+        lines.append(suffix_dashes)
         self.file.write("\n".join(lines) + "\n")
 
         # Flush the output to the file
@@ -106,16 +107,13 @@ class TensorBoardOutputFormat(KVWriter):
         os.makedirs(dir, exist_ok=True)
         self.dir = dir
         self.step = 1
-        prefix = "events"
-        path = osp.join(osp.abspath(dir), prefix)
 
-        self.writer = SummaryWriter(path)
+        self.writer = SummaryWriter(dir)
 
     def writekvs(self, kvs):
-        with self.writer.as_default():
-            for k, v in kvs.items():
-                self.tf.summary.scalar(k, v, step=self.step)
-            self.writer.flush()
+        for k, v in kvs.items():
+            self.writer.add_scalar(k, v, self.step)
+        self.writer.flush()
         self.step += 1
 
     def close(self):

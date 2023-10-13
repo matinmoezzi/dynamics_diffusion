@@ -2,6 +2,7 @@ defaults:
   - _self_
   - trainer: ddpm
 format_strs:
+  - log
   - stdout
   - tensorboard
 hydra:
