@@ -3,7 +3,7 @@ defaults:
   - trainer: ddpm
 format_strs:
   - stdout
-  # - tensorboard
+  - tensorboard
 hydra:
   run:
     dir: ./logs/${hydra:runtime.choices.trainer}/${get_runtime_choice:dataset}/${get_runtime_choice:diffusion}${sde_continuous_solver:${trainer}}/${get_runtime_choice:model}/${now:%Y%m%d-%H%M%S}

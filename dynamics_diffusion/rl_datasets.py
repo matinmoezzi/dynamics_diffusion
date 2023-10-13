@@ -79,7 +79,6 @@ def d4rl_load_data(
         loader = DataLoader(
             dataset,
             batch_size=batch_size,
-            shuffle=True,
             num_workers=num_workers,
             drop_last=True,
             sampler=DistributedSampler(dataset, drop_last=True),

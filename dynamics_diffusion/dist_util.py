@@ -24,6 +24,12 @@ def setup_dist():
     if dist.is_initialized():
         return
 
+    os.environ["RANK"] = os.environ.get("RANK", "0")
+    os.environ["LOCAL_RANK"] = os.environ.get("LOCAL_RANK", "0")
+    os.environ["WORLD_SIZE"] = os.environ.get("WORLD_SIZE", "1")
+    os.environ["MASTER_ADDR"] = os.environ.get("MASTER_ADDR", "localhost")
+    os.environ["MASTER_PORT"] = os.environ.get("MASTER_PORT", "29500")
+
     backend = "gloo" if not th.cuda.is_available() else "nccl"
 
     dist.init_process_group(backend=backend)

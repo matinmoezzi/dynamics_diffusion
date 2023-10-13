@@ -612,7 +612,6 @@ class UNetModel(nn.Module):
             zero_module(conv_nd(dims, input_ch, out_channels, 3, padding=1)),
         )
 
-
     def forward(self, x, timesteps, y=None):
         """
         Apply the model to an input batch.
@@ -633,7 +632,7 @@ class UNetModel(nn.Module):
             assert y.shape == (x.shape[0],)
             emb = emb + self.label_emb(y)
 
-        h = x.type(self.dtype)
+        h = x
         for module in self.input_blocks:
             h = module(h, emb)
             hs.append(h)
@@ -834,7 +833,6 @@ class EncoderUNetModel(nn.Module):
         else:
             raise NotImplementedError(f"Unexpected {pool} pooling")
 
-
     def forward(self, x, timesteps):
         """
         Apply the model to an input batch.
@@ -846,7 +844,7 @@ class EncoderUNetModel(nn.Module):
         emb = self.time_embed(timestep_embedding(timesteps, self.model_channels))
 
         results = []
-        h = x.type(self.dtype)
+        h = x
         for module in self.input_blocks:
             h = module(h, emb)
             if self.pool.startswith("spatial"):

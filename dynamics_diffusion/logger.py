@@ -9,10 +9,11 @@ import sys
 import os.path as osp
 import time
 import datetime
-import warnings
 from collections import defaultdict
 from contextlib import contextmanager
 import torch.distributed as dist
+from torch.utils.tensorboard import SummaryWriter
+
 
 DEBUG = 10
 INFO = 20
@@ -108,10 +109,7 @@ class TensorBoardOutputFormat(KVWriter):
         prefix = "events"
         path = osp.join(osp.abspath(dir), prefix)
 
-        import tensorflow as tf
-
-        self.tf = tf
-        self.writer = tf.summary.create_file_writer(path)
+        self.writer = SummaryWriter(path)
 
     def writekvs(self, kvs):
         with self.writer.as_default():
