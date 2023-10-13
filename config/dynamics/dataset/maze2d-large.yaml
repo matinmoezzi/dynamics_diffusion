@@ -3,3 +3,4 @@ name: maze2d-large-v1
 batch_size: ${..batch_size}
 deterministic: True
 reward_tune: null
+num_workers: 4

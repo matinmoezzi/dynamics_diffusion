@@ -26,6 +26,5 @@ ema_rate: "0.9999"  # comma-separated list of EMA values
 log_interval: 5000
 save_interval: 100000
 resume_checkpoint: ""
-use_fp16: True
-fp16_scale_growth: 1e-3
 opt_name: "AdamW"
+use_amp: True

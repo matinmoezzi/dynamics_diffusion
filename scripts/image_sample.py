@@ -108,8 +108,6 @@ def main():
 
         model.to(dist_util.dev())
 
-        if model_cfg.target.use_fp16:
-            model.convert_to_fp16()
 
         model.eval()
     elif sampler == "sde":

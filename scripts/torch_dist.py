@@ -14,11 +14,10 @@ def run(rank, size, hostname):
     if rank == 0:
         for rank_recv in range(1, size):
             dist.send(tensor=tensor, dst=rank_recv)
-            print('worker_{} sent data to Rank {}\n'.format(0, rank_recv))
+            print("worker_{} sent data to Rank {}\n".format(0, rank_recv))
     else:
         dist.recv(tensor=tensor, src=0)
-        print('worker_{} has received data from rank {}\n'.format(rank, 0))
-
+        print("worker_{} has received data from rank {}\n".format(rank, 0))
 
 
 def _find_free_port():
@@ -30,6 +29,7 @@ def _find_free_port():
     finally:
         s.close()
 
+
 if __name__ == "__main__":
     comm = MPI.COMM_WORLD
     hostname = socket.gethostbyname(socket.getfqdn())
@@ -39,5 +39,7 @@ if __name__ == "__main__":
 
     port = comm.bcast(_find_free_port(), root=0)
     os.environ["MASTER_PORT"] = str(port)
-    dist.init_process_group(backend="nccl", world_size=comm.size, rank=comm.rank, init_method="env://")
+    dist.init_process_group(
+        backend="nccl", world_size=comm.size, rank=comm.rank, init_method="env://"
+    )
     run(comm.rank, comm.size, hostname)

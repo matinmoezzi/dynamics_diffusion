@@ -1,6 +1,5 @@
-from mpi4py import MPI
-import numpy as np
 from torch.utils.data import DataLoader, Dataset
+from torch.utils.data.distributed import DistributedSampler
 import torch
 import os
 
@@ -49,7 +48,9 @@ def get_d4rl_dataset(name, batch_size, deterministic=False, reward_tune=None):
     }
 
 
-def d4rl_load_data(*, name, batch_size, deterministic=False, reward_tune=None):
+def d4rl_load_data(
+    *, name, batch_size, deterministic=False, reward_tune=None, num_workers=1
+):
     """
     Create a generator over (states, actions, next_states, rewards, dones) pairs given a d4rl environment.
 
@@ -63,44 +64,42 @@ def d4rl_load_data(*, name, batch_size, deterministic=False, reward_tune=None):
     dataset = D4RLDataset(
         data,
         reward_tune,
-        shard=MPI.COMM_WORLD.Get_rank(),
-        num_shards=MPI.COMM_WORLD.Get_size(),
     )
     if deterministic:
         loader = DataLoader(
-            dataset, batch_size=batch_size, shuffle=False, num_workers=1, drop_last=True
+            dataset,
+            batch_size=batch_size,
+            shuffle=False,
+            num_workers=num_workers,
+            drop_last=True,
+            pin_memory=True,
+            sampler=DistributedSampler(dataset, drop_last=True),
         )
     else:
         loader = DataLoader(
-            dataset, batch_size=batch_size, shuffle=True, num_workers=1, drop_last=True
+            dataset,
+            batch_size=batch_size,
+            shuffle=True,
+            num_workers=num_workers,
+            drop_last=True,
+            sampler=DistributedSampler(dataset, drop_last=True),
+            pin_memory=True,
         )
+
     while True:
         yield from loader
 
 
 class D4RLDataset(Dataset):
-    def __init__(self, data, reward_tune, shard=0, num_shards=1):
+    def __init__(self, data, reward_tune):
         self.data = data
 
-        self.state = torch.from_numpy(
-            self.data["observations"][shard:][::num_shards]
-        ).float()
-        self.action = torch.from_numpy(
-            self.data["actions"][shard:][::num_shards]
-        ).float()
-        self.next_state = torch.from_numpy(
-            self.data["next_observations"][shard:][::num_shards]
-        ).float()
-        reward = (
-            torch.from_numpy(self.data["rewards"][shard:][::num_shards])
-            .view(-1, 1)
-            .float()
-        )
+        self.state = torch.from_numpy(self.data["observations"]).float()
+        self.action = torch.from_numpy(self.data["actions"]).float()
+        self.next_state = torch.from_numpy(self.data["next_observations"]).float()
+        reward = torch.from_numpy(self.data["rewards"]).view(-1, 1).float()
         self.not_done = (
-            1.0
-            - torch.from_numpy(self.data["terminals"][shard:][::num_shards])
-            .view(-1, 1)
-            .float()
+            1.0 - torch.from_numpy(self.data["terminals"]).view(-1, 1).float()
         )
 
         self.len = self.state.shape[0]

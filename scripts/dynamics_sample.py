@@ -60,8 +60,6 @@ def main(cfg: DictConfig):
         dist_util.load_state_dict(str(model_path), map_location="cpu")
     )
     model.to(dist_util.dev())
-    if train_cfg.trainer.use_fp16:
-        model.convert_to_fp16()
     model.eval()
 
     is_sde = False

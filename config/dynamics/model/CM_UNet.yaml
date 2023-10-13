@@ -12,6 +12,5 @@ class_cond: ${..dataset.class_cond}
 use_checkpoint: False
 use_scale_shift_norm: False
 resblock_updown: True
-use_fp16: ${..use_fp16}
 use_new_attention_order: False
 learn_sigma: False

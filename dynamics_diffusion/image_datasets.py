@@ -3,9 +3,9 @@ import random
 
 from PIL import Image
 import blobfile as bf
-from mpi4py import MPI
 import numpy as np
 from torch.utils.data import DataLoader, Dataset
+from torch.utils.data.distributed import DistributedSampler
 
 
 def load_data(
@@ -17,6 +17,7 @@ def load_data(
     deterministic=False,
     random_crop=False,
     random_flip=True,
+    num_workers=1,
 ):
     """
     For a dataset, create a generator over (images, kwargs) pairs.
@@ -50,18 +51,28 @@ def load_data(
         image_size,
         all_files,
         classes=classes,
-        shard=MPI.COMM_WORLD.Get_rank(),
-        num_shards=MPI.COMM_WORLD.Get_size(),
         random_crop=random_crop,
         random_flip=random_flip,
     )
     if deterministic:
         loader = DataLoader(
-            dataset, batch_size=batch_size, shuffle=False, num_workers=1, drop_last=True
+            dataset,
+            batch_size=batch_size,
+            shuffle=False,
+            num_workers=num_workers,
+            drop_last=True,
+            sampler=DistributedSampler(dataset, drop_last=True),
+            pin_memory=True,
         )
     else:
         loader = DataLoader(
-            dataset, batch_size=batch_size, shuffle=True, num_workers=1, drop_last=True
+            dataset,
+            batch_size=batch_size,
+            shuffle=True,
+            num_workers=num_workers,
+            drop_last=True,
+            sampler=DistributedSampler(dataset, drop_last=True),
+            pin_memory=True,
         )
     while True:
         yield from loader
@@ -85,15 +96,13 @@ class ImageDataset(Dataset):
         resolution,
         image_paths,
         classes=None,
-        shard=0,
-        num_shards=1,
         random_crop=False,
         random_flip=True,
     ):
         super().__init__()
         self.resolution = resolution
-        self.local_images = image_paths[shard:][::num_shards]
-        self.local_classes = None if classes is None else classes[shard:][::num_shards]
+        self.local_images = image_paths
+        self.local_classes = None if classes is None else classes
         self.random_crop = random_crop
         self.random_flip = random_flip
 

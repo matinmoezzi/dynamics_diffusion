@@ -7,12 +7,12 @@ import os
 from pathlib import Path
 import sys
 import os.path as osp
-import json
 import time
 import datetime
 import warnings
 from collections import defaultdict
 from contextlib import contextmanager
+import torch.distributed as dist
 
 DEBUG = 10
 INFO = 20
@@ -63,7 +63,9 @@ class HumanOutputFormat(KVWriter, SeqWriter):
             valwidth = max(map(len, key2str.values()))
 
         # Write out the data
-        dashes = "-" * (keywidth + valwidth + 7)
+        suffix = f"GPU{dist.get_rank()}" if dist.is_initialized() else ""
+        dash_len = keywidth + valwidth + 7 + len(suffix)
+        dashes = "-" * (dash_len // 2) + suffix + "-" * (dash_len // 2)
         lines = [dashes]
         for key, val in sorted(key2str.items(), key=lambda kv: kv[0].lower()):
             lines.append(
@@ -92,58 +94,6 @@ class HumanOutputFormat(KVWriter, SeqWriter):
     def close(self):
         if self.own_file:
             self.file.close()
-
-
-class JSONOutputFormat(KVWriter):
-    def __init__(self, filename):
-        self.file = open(filename, "wt")
-
-    def writekvs(self, kvs):
-        for k, v in sorted(kvs.items()):
-            if hasattr(v, "dtype"):
-                kvs[k] = float(v)
-        self.file.write(json.dumps(kvs) + "\n")
-        self.file.flush()
-
-    def close(self):
-        self.file.close()
-
-
-class CSVOutputFormat(KVWriter):
-    def __init__(self, filename):
-        self.file = open(filename, "w+t")
-        self.keys = []
-        self.sep = ","
-
-    def writekvs(self, kvs):
-        # Add our current row to the history
-        extra_keys = list(kvs.keys() - self.keys)
-        extra_keys.sort()
-        if extra_keys:
-            self.keys.extend(extra_keys)
-            self.file.seek(0)
-            lines = self.file.readlines()
-            self.file.seek(0)
-            for i, k in enumerate(self.keys):
-                if i > 0:
-                    self.file.write(",")
-                self.file.write(k)
-            self.file.write("\n")
-            for line in lines[1:]:
-                self.file.write(line[:-1])
-                self.file.write(self.sep * len(extra_keys))
-                self.file.write("\n")
-        for i, k in enumerate(self.keys):
-            if i > 0:
-                self.file.write(",")
-            v = kvs.get(k)
-            if v is not None:
-                self.file.write(str(v))
-        self.file.write("\n")
-        self.file.flush()
-
-    def close(self):
-        self.file.close()
 
 
 class TensorBoardOutputFormat(KVWriter):
@@ -182,10 +132,6 @@ def make_output_format(format, ev_dir, log_suffix=""):
         return HumanOutputFormat(sys.stdout)
     elif format == "log":
         return HumanOutputFormat(osp.join(ev_dir, "log%s.txt" % log_suffix))
-    elif format == "json":
-        return JSONOutputFormat(osp.join(ev_dir, "progress%s.json" % log_suffix))
-    elif format == "csv":
-        return CSVOutputFormat(osp.join(ev_dir, "progress%s.csv" % log_suffix))
     elif format == "tensorboard":
         return TensorBoardOutputFormat(osp.join(ev_dir, "tb%s" % log_suffix))
     else:
@@ -341,18 +287,7 @@ class Logger(object):
         self.name2cnt[key] = cnt + 1
 
     def dumpkvs(self):
-        if self.comm is None:
-            d = self.name2val
-        else:
-            d = mpi_weighted_mean(
-                self.comm,
-                {
-                    name: (val, self.name2cnt.get(name, 1))
-                    for (name, val) in self.name2val.items()
-                },
-            )
-            if self.comm.rank != 0:
-                d["dummy"] = 1  # so we don't get a warning about empty dict
+        d = self.name2val
         out = d.copy()  # Return the dict for unit testing purposes
         for fmt in self.output_formats:
             if isinstance(fmt, KVWriter):
@@ -388,46 +323,7 @@ class Logger(object):
                 fmt.writeseq(map(str, args))
 
 
-def get_rank_without_mpi_import():
-    # check environment variables here instead of importing mpi4py
-    # to avoid calling MPI_Init() when this module is imported
-    for varname in ["PMI_RANK", "OMPI_COMM_WORLD_RANK"]:
-        if varname in os.environ:
-            return int(os.environ[varname])
-    return 0
-
-
-def mpi_weighted_mean(comm, local_name2valcount):
-    """
-    Copied from: https://github.com/openai/baselines/blob/ea25b9e8b234e6ee1bca43083f8f3cf974143998/baselines/common/mpi_util.py#L110
-    Perform a weighted average over dicts that are each on a different node
-    Input: local_name2valcount: dict mapping key -> (value, count)
-    Returns: key -> mean
-    """
-    all_name2valcount = comm.gather(local_name2valcount)
-    if comm.rank == 0:
-        name2sum = defaultdict(float)
-        name2count = defaultdict(float)
-        for n2vc in all_name2valcount:
-            for name, (val, count) in n2vc.items():
-                try:
-                    val = float(val)
-                except ValueError:
-                    if comm.rank == 0:
-                        warnings.warn(
-                            "WARNING: tried to compute mean on non-float {}={}".format(
-                                name, val
-                            )
-                        )
-                else:
-                    name2sum[name] += val * count
-                    name2count[name] += count
-        return {name: name2sum[name] / name2count[name] for name in name2sum}
-    else:
-        return {}
-
-
-def configure(dir=None, format_strs=None, comm=None, log_suffix=""):
+def configure(dir=None, format_strs=["log", "stdout"], comm=None, log_suffix=""):
     """
     If comm is provided, average all numerical stats across that comm
     """
@@ -443,15 +339,9 @@ def configure(dir=None, format_strs=None, comm=None, log_suffix=""):
     dir = os.path.expanduser(dir)
     os.makedirs(os.path.expanduser(dir), exist_ok=True)
 
-    rank = get_rank_without_mpi_import()
-    if rank > 0:
-        log_suffix = log_suffix + "-rank%03i" % rank
+    if dist.is_initialized():
+        log_suffix = log_suffix + f"[GPU{dist.get_rank()}]"
 
-    if format_strs is None:
-        if rank == 0:
-            format_strs = os.getenv("LOG_FORMAT", "stdout,log,csv").split(",")
-        else:
-            format_strs = os.getenv("LOG_FORMAT_MPI", "log").split(",")
     format_strs = filter(None, format_strs)
     output_formats = [make_output_format(f, dir, log_suffix) for f in format_strs]
 
