@@ -73,7 +73,7 @@ class TrainLoop:
             self.cond_dim = self.x_dim + tmp_data[1]["action"].shape[1]
             self.model = MLP(self.x_dim, self.cond_dim, learn_sigma=model.learn_sigma)
 
-        self.model = model.to(self.local_rank)
+        self.model = self.model.to(self.local_rank)
         self.batch_size = batch_size
         self.microbatch = microbatch if microbatch > 0 else batch_size
         self.lr = lr
@@ -398,12 +398,14 @@ class CMTrainLoop(TrainLoop):
             dst.data.copy_(src.data)
 
         if self.target_model:
-            self.target_model.load_state_dict(self.snapshot["target_model_state"])
+            if self.resume_checkpoint:
+                self.target_model.load_state_dict(self.snapshot["target_model_state"])
             self.target_model.requires_grad_(False)
             self.target_model.train()
 
         if self.teacher_model:
-            self.teacher_model.load_state_dict(self.snapshot["teacher_model_state"])
+            if self.resume_checkpoint:
+                self.teacher_model.load_state_dict(self.snapshot["teacher_model_state"])
             self.teacher_model.requires_grad_(False)
             self.teacher_model.eval()
 
@@ -601,7 +603,7 @@ class CMTrainLoop(TrainLoop):
         raw_model = model.module if hasattr(model, "module") else model
         snapshot["model_state"] = raw_model.state_dict()
         snapshot["opt_state"] = self.opt.state_dict()
-        snapshot["step"] = self.step
+        snapshot["step"] = step
         for rate, ema in zip(self.ema_rate, self.ema):
             snapshot[f"ema_{rate}"] = ema.state_dict()
 

@@ -1,8 +1,8 @@
 defaults:
   - _self_
-  - /model: MLP
+  - /model: CM_UNet
   - /diffusion: karras
-  - /dataset: kitchen-mixed
+  - /dataset: cifar10 
 _target_: dynamics_diffusion.train_util.CMTrainLoop
 
 teacher_model_path: ""

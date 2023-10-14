@@ -1,8 +1,8 @@
 defaults:
   - _self_
-  - /model: MLP
+  - /model: NCSNpp
   - /diffusion: VESDE
-  - /dataset: kitchen-mixed
+  - /dataset: cifar10 
 _target_: dynamics_diffusion.train_util.SDETrainLoop
 
 continuous: True
@@ -25,4 +25,4 @@ ema_rate: "0.9999"  # comma-separated list of EMA values
 log_interval: 1000
 save_interval: 10000
 resume_checkpoint: ""
-use_amp: True
+use_amp: False
