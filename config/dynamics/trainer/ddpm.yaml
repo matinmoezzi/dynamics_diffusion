@@ -1,8 +1,8 @@
 defaults:
   - _self_
-  - /model: MLP
+  - /model: UNet
   - /diffusion: gaussian
-  - /dataset: kitchen-mixed 
+  - /dataset: cifar10 
 _target_: dynamics_diffusion.train_util.TrainLoop
 total_training_steps: 1e6
 schedule_sampler: "uniform"

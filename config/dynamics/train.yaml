@@ -1,6 +1,6 @@
 defaults:
   - _self_
-  - trainer: cm
+  - trainer: ddpm
 format_strs:
   - log
   - stdout
