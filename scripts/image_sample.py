@@ -9,6 +9,7 @@ import hydra
 import numpy as np
 import torch as th
 import torch.distributed as dist
+from torch.nn.parallel.distributed import DistributedDataParallel as DDP
 
 from dynamics_diffusion import dist_util, logger, sde_sampling
 from dynamics_diffusion.karras_diffusion import karras_sample
@@ -44,10 +45,9 @@ def show_samples(x):
 def main():
     abs_path = Path(__file__).parent
     cfg = OmegaConf.load(abs_path / "../config/dynamics/sample_image.yaml")
+    assert cfg.model_dir is not None or cfg.model_dir != "", "Model not found."
     if cfg.model_dir.split(".")[-1] in ["pt", "pth"]:
-        assert cfg.model_dir is not None or cfg.model_dir != "", "Model not found."
         model_path = cfg.model_dir
-
         assert (
             cfg.model_cfg is not None or cfg.model_cfg != ""
         ), "Model config not found."
@@ -64,17 +64,14 @@ def main():
         if sampler == "cm":
             cm_training_mode = cfg.cm_sampler.training_mode
         if sampler == "sde":
-            continuous = model_cfg.target.continuous
+            continuous = model_cfg.continuous
 
     else:
         assert Path(cfg.model_dir, ".hydra").is_dir(), "Hydra configuration not found."
+        hydra_cfg = OmegaConf.load(Path(cfg.model_dir, ".hydra", "hydra.yaml"))
 
-        model_prefix = "ema" if cfg.use_ema else "model"
-
-        list_models = list(
-            pathlib.Path(cfg.model_dir, "train").glob(f"{model_prefix}*.pt")
-        )
-        assert list_models, f"No {model_prefix} found."
+        list_models = list(pathlib.Path(cfg.model_dir, "train").glob(f"*.pt"))
+        assert list_models, f"No model found."
 
         model_path = max(list_models, key=os.path.getctime)
 
@@ -83,50 +80,35 @@ def main():
         model_cfg = train_cfg.trainer.model
         diffusion_cfg = train_cfg.trainer.diffusion
 
-        if train_cfg.trainer._target_.split(".")[-1] == "DDPMImageTrainer":
-            sampler = "ddpm"
-        elif train_cfg.trainer._target_.split(".")[-1] == "CMImageTrainer":
-            sampler = "cm"
-            cm_training_mode = train_cfg.trainer.training_mode
-        elif train_cfg.trainer._target_.split(".")[-1] == "SDEImageTrainer":
-            sampler = "sde"
-            continuous = train_cfg.trainer.continuous
-        else:
-            raise NotImplementedError(f"{train_cfg.trainer._target_} not supported.")
+        sampler = hydra_cfg.hydra.runtime.choices.trainer
 
     log_dir = abs_path / f"../image_samples/{sampler}/{datetime.now():%Y%m%d-%H%M%S}"
-    dist_util.setup_dist()
+    if th.cuda.is_available():
+        dist_util.setup_dist()
     logger.configure(dir=str(log_dir), format_strs=["stdout"])
 
     logger.log("creating model and diffusion...")
 
-    model = hydra.utils.instantiate(model_cfg.target)
-    if sampler in ["ddpm", "cm"]:
-        model.load_state_dict(
-            dist_util.load_state_dict(str(model_path), map_location="cpu")
-        )
-
-        model.to(dist_util.dev())
-
-
-        model.eval()
-    elif sampler == "sde":
-        model = th.nn.DataParallel(model)
-        model.to(dist_util.dev())
-        loaded_state = dist_util.load_state_dict(
-            str(model_path), map_location=dist_util.dev()
-        )
-        model.load_state_dict(loaded_state["model"], strict=False)
+    model = hydra.utils.instantiate(model_cfg)
+    if dist.is_initialized():
+        loc = f"cuda:{os.environ['LOCAL_RANK']}"
+    else:
+        loc = "cpu"
+    snapshot = th.load(model_path, map_location=loc)
+    model.load_state_dict(snapshot["model"])
+    model = model.to(os.environ["LOCAL_RANK"])
+    model = DDP(model, device_ids=[os.environ["LOCAL_RANK"]])
+    model.eval()
 
     model_kwargs = {}
     if sampler == "ddpm":
-        diffusion = hydra.utils.call(diffusion_cfg.target)
+        diffusion = hydra.utils.call(diffusion_cfg)
         sample_fn = (
             diffusion.p_sample_loop
             if not cfg.ddpm_sampler.use_ddim
             else diffusion.ddim_sample_loop
         )
-        if model_cfg.target.class_cond:
+        if model_cfg.class_cond:
             classes = th.randint(
                 low=0, high=NUM_CLASSES, size=(cfg.batch_size,), device=dist_util.dev()
             )
@@ -137,19 +119,21 @@ def main():
             (
                 cfg.batch_size,
                 3,
-                model_cfg.target.image_size,
-                model_cfg.target.image_size,
+                model_cfg.image_size,
+                model_cfg.image_size,
             ),
             clip_denoised=cfg.ddpm_sampler.clip_denoised,
             model_kwargs=model_kwargs,
         )
     elif sampler == "cm":
-        assert cm_training_mode is not None, "CM training mode not found."
-        if "consistency" in cm_training_mode:
+        assert (
+            train_cfg.trainer.training_mode is not None
+        ), "CM training mode not found."
+        if "consistency" in train_cfg.trainer.training_mode:
             distillation = True
         else:
             distillation = False
-        diffusion = hydra.utils.call(diffusion_cfg.target, distillation=distillation)
+        diffusion = hydra.utils.call(diffusion_cfg, distillation=distillation)
         if cfg.cm_sampler.sampler == "multistep":
             assert len(cfg.ts) > 0
             ts = tuple(int(x) for x in cfg.ts.split(","))
@@ -158,7 +142,7 @@ def main():
         generator = get_generator(
             cfg.cm_sampler.generator, cfg.num_samples, cfg.cm_sampler.seed
         )
-        if model_cfg.target.class_cond:
+        if model_cfg.class_cond:
             classes = th.randint(
                 low=0, high=NUM_CLASSES, size=(cfg.batch_size,), device=dist_util.dev()
             )
@@ -170,15 +154,15 @@ def main():
             (
                 cfg.batch_size,
                 3,
-                model_cfg.target.image_size,
-                model_cfg.target.image_size,
+                model_cfg.image_size,
+                model_cfg.image_size,
             ),
             steps=cfg.cm_sampler.steps,
             device=dist_util.dev(),
             clip_denoised=cfg.cm_sampler.clip_denoised,
             sampler=cfg.cm_sampler.sampler,
-            sigma_min=diffusion_cfg.target.sigma_min,
-            sigma_max=diffusion_cfg.target.sigma_max,
+            sigma_min=diffusion_cfg.sigma_min,
+            sigma_max=diffusion_cfg.sigma_max,
             s_churn=cfg.cm_sampler.s_churn,
             s_tmin=cfg.cm_sampler.s_tmin,
             s_tmax=cfg.cm_sampler.s_tmax,
@@ -188,19 +172,17 @@ def main():
             model_kwargs=model_kwargs,
         )
     elif sampler == "sde":
-        sde = hydra.utils.instantiate(diffusion_cfg.target)
+        sde = hydra.utils.instantiate(diffusion_cfg)
         sampling_eps = 1e-3
         if isinstance(sde, VESDE):
             sampling_eps = 1e-5
         sampling_shape = (
             cfg.batch_size,
             3,
-            model_cfg.target.image_size,
-            model_cfg.target.image_size,
+            model_cfg.image_size,
+            model_cfg.image_size,
         )
-        inverse_scaler = (
-            lambda x: (x + 1.0) / 2.0 if model_cfg.target.data_centered else x
-        )
+        inverse_scaler = lambda x: (x + 1.0) / 2.0 if model_cfg.data_centered else x
         sampling_fn = partial(
             sde_sampling.get_sampling_fn,
             cfg.sde_sampler,
@@ -208,7 +190,7 @@ def main():
             sampling_shape,
             inverse_scaler,
             sampling_eps,
-            continuous=continuous,
+            continuous=train_cfg.trainer.continuous,
             device=dist_util.dev(),
         )
     else:

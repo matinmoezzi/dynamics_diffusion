@@ -260,7 +260,7 @@ class TrainLoop:
             bf.join(get_blob_logdir(), f"checkpoint_{self.step:06d}.pt"),
             "wb",
         ) as f:
-            th.save(self.opt.state_dict(), f)
+            th.save(snapshot, f)
 
     def _get_optimizer(self):
         if self.opt_name == "adam":
@@ -615,6 +615,12 @@ class CMTrainLoop(TrainLoop):
         if self.teacher_model and self.training_mode == "progdist":
             logger.log("saving teacher model state")
             snapshot["teacher_model_state"] = self.teacher_model.state_dict()
+
+        with bf.BlobFile(
+            bf.join(get_blob_logdir(), f"checkpoint_{step:06d}.pt"),
+            "wb",
+        ) as f:
+            th.save(snapshot, f)
 
     def log_step(self):
         step = self.global_step
