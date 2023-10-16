@@ -10,7 +10,7 @@ setup(
         # "pandas>=1.0",
     ],
     entry_points={},
-    python_requires=">=3.10",
+    python_requires=">=3.9",
     # Add metadata about your project
     author="Matin Moezzi",
     author_email="matin.moezzi@mail.utoronto.ca",
