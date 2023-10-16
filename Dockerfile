@@ -12,4 +12,5 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
     libpng-dev 
 RUN pip install -r requirements.txt
 RUN pip install -e .
+RUN conda install -y tensorboard
 CMD ["python", "scripts/dynamics_train.py"]
