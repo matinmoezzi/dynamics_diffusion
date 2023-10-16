@@ -71,7 +71,6 @@ class TrainLoop:
             self.cond_dim = self.x_dim + tmp_data[1]["action"].shape[1]
             self.model = MLP(self.x_dim, self.cond_dim, learn_sigma=model.learn_sigma)
 
-        self.model = self.model.to(dist_util.dev())
         self.batch_size = batch_size
         self.microbatch = microbatch if microbatch > 0 else batch_size
         self.lr = lr
@@ -116,9 +115,16 @@ class TrainLoop:
 
         self._load_checkpoint()
 
-        if dist.is_initialized():
+        if th.cuda.is_available():
             self.use_ddp = True
-            self.ddp_model = DDP(self.model, device_ids=[dist_util.get_local_rank()])
+            self.ddp_model = DDP(
+                self.model,
+                device_ids=[dist_util.dev()],
+                output_device=dist_util.dev(),
+                broadcast_buffers=False,
+                bucket_cap_mb=128,
+                find_unused_parameters=False,
+            )
             self.model = self.ddp_model
         else:
             if dist.get_world_size() > 1:
@@ -171,14 +177,11 @@ class TrainLoop:
             self.run_step(batch, cond)
             if self.step % self.log_interval == 0:
                 logger.dumpkvs()
-            if dist_util.get_local_rank() == 0 and self.step % self.save_interval == 0:
+            if self.step % self.save_interval == 0:
                 self.save()
             self.step += 1
         # Save the last checkpoint if it wasn't already saved.
-        if (
-            dist_util.get_local_rank() == 0
-            and (self.step - 1) % self.save_interval != 0
-        ):
+        if (self.step - 1) % self.save_interval != 0:
             self.save()
 
     def run_step(self, batch, cond):
@@ -202,9 +205,7 @@ class TrainLoop:
                 for k, v in cond.items()
             }
             last_batch = (i + self.microbatch) >= batch.shape[0]
-            t, weights = self.schedule_sampler.sample(
-                micro.shape[0], dist_util.get_local_rank()
-            )
+            t, weights = self.schedule_sampler.sample(micro.shape[0], dist_util.dev())
 
             compute_losses = functools.partial(
                 self.diffusion.training_losses,
@@ -250,20 +251,22 @@ class TrainLoop:
         logger.logkv("samples", (self.step + 1) * self.global_batch)
 
     def save(self):
-        snapshot = {}
-        model = self.model
-        raw_model = model.module if hasattr(model, "module") else model
-        snapshot["model_state"] = raw_model.state_dict()
-        snapshot["opt_state"] = self.opt.state_dict()
-        snapshot["step"] = self.step
-        for rate, ema in zip(self.ema_rate, self.ema):
-            snapshot[f"ema_{rate}"] = ema.state_dict()
+        if dist_util.get_local_rank() == 0:
+            snapshot = {}
+            model = self.model
+            raw_model = model.module if hasattr(model, "module") else model
+            snapshot["model_state"] = raw_model.state_dict()
+            snapshot["opt_state"] = self.opt.state_dict()
+            snapshot["step"] = self.step
+            for rate, ema in zip(self.ema_rate, self.ema):
+                snapshot[f"ema_{rate}"] = ema.state_dict()
 
-        with bf.BlobFile(
-            bf.join(get_blob_logdir(), f"checkpoint_{self.step:06d}.pt"),
-            "wb",
-        ) as f:
-            th.save(snapshot, f)
+            with bf.BlobFile(
+                bf.join(get_blob_logdir(), f"checkpoint_{self.step:06d}.pt"),
+                "wb",
+            ) as f:
+                th.save(snapshot, f)
+        dist.barrier()
 
     def _get_optimizer(self):
         if self.opt_name == "adam":
@@ -457,7 +460,7 @@ class CMTrainLoop(TrainLoop):
                 logger.dumpkvs()
 
         # Save the last checkpoint if it wasn't already saved.
-        if dist_util.get_local_rank() == 0 and not saved:
+        if not saved:
             self.save()
 
     def run_step(self, batch, cond):
@@ -597,33 +600,35 @@ class CMTrainLoop(TrainLoop):
                 loss.backward()
 
     def save(self):
-        import blobfile as bf
+        if dist_util.get_local_rank() == 0:
+            import blobfile as bf
 
-        step = self.global_step
+            step = self.global_step
 
-        snapshot = {}
-        model = self.model
-        raw_model = model.module if hasattr(model, "module") else model
-        snapshot["model_state"] = raw_model.state_dict()
-        snapshot["opt_state"] = self.opt.state_dict()
-        snapshot["step"] = step
-        for rate, ema in zip(self.ema_rate, self.ema):
-            snapshot[f"ema_{rate}"] = ema.state_dict()
+            snapshot = {}
+            model = self.model
+            raw_model = model.module if hasattr(model, "module") else model
+            snapshot["model_state"] = raw_model.state_dict()
+            snapshot["opt_state"] = self.opt.state_dict()
+            snapshot["step"] = step
+            for rate, ema in zip(self.ema_rate, self.ema):
+                snapshot[f"ema_{rate}"] = ema.state_dict()
 
-        logger.log("saving optimizer state...")
+            logger.log("saving optimizer state...")
 
-        if self.target_model:
-            logger.log("saving target model state")
-            snapshot["target_model_state"] = self.target_model.state_dict()
-        if self.teacher_model and self.training_mode == "progdist":
-            logger.log("saving teacher model state")
-            snapshot["teacher_model_state"] = self.teacher_model.state_dict()
+            if self.target_model:
+                logger.log("saving target model state")
+                snapshot["target_model_state"] = self.target_model.state_dict()
+            if self.teacher_model and self.training_mode == "progdist":
+                logger.log("saving teacher model state")
+                snapshot["teacher_model_state"] = self.teacher_model.state_dict()
 
-        with bf.BlobFile(
-            bf.join(get_blob_logdir(), f"checkpoint_{step:06d}.pt"),
-            "wb",
-        ) as f:
-            th.save(snapshot, f)
+            with bf.BlobFile(
+                bf.join(get_blob_logdir(), f"checkpoint_{step:06d}.pt"),
+                "wb",
+            ) as f:
+                th.save(snapshot, f)
+        dist.barrier()
 
     def log_step(self):
         step = self.global_step
