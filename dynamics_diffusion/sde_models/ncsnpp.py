@@ -38,6 +38,7 @@ class NCSNpp(nn.Module):
     def __init__(self, **kwargs):
         super().__init__()
         kwargs = OmegaConf.create(kwargs)
+        self.dtype = torch.float16 if kwargs.use_fp16 else torch.float32
         kwargs.model = kwargs
         self.config = kwargs
         self.act = act = get_act(kwargs)
@@ -277,6 +278,8 @@ class NCSNpp(nn.Module):
         self.all_modules = nn.ModuleList(modules)
 
     def forward(self, x, time_cond):
+        x = x.type(self.dtype)
+        time_cond = time_cond.type(self.dtype)
         # timestep/noise_level embedding; only for continuous training
         modules = self.all_modules
         m_idx = 0
@@ -426,3 +429,9 @@ class NCSNpp(nn.Module):
             h = h / used_sigmas
 
         return h
+
+    def convert_to_fp16(self):
+        self.half()
+
+    def convert_to_fp32(self):
+        self.float()

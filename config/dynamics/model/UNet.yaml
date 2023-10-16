@@ -14,3 +14,4 @@ use_scale_shift_norm: True
 resblock_updown: True
 use_new_attention_order: False
 learn_sigma: True
+use_fp16: ${..use_fp16}

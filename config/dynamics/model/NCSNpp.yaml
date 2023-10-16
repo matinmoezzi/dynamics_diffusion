@@ -34,3 +34,5 @@ num_channels: 3
 data_centered: False
 
 continuous: ${..continuous}
+
+use_fp16: ${..use_fp16}

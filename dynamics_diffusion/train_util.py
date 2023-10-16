@@ -11,6 +11,7 @@ import torch.distributed as dist
 from torch.nn.parallel.distributed import DistributedDataParallel as DDP
 from torch.optim import RAdam
 from tqdm import trange
+from dynamics_diffusion.fp16_util import MixedPrecisionTrainer
 from dynamics_diffusion.script_util import ConfigStore, create_ema_and_scales_fn
 from dynamics_diffusion.sde_models.ema import ExponentialMovingAverage
 from .mlp import MLP
@@ -49,7 +50,8 @@ class TrainLoop:
         log_interval,
         save_interval,
         resume_checkpoint,
-        use_amp,
+        use_fp16,
+        fp16_scale_growth,
         opt_name: str,
         schedule_sampler=None,
         weight_decay=0.0,
@@ -69,7 +71,12 @@ class TrainLoop:
             ), "Dataset must have state and action"
             self.x_dim = tmp_data[1]["state"].shape[1]
             self.cond_dim = self.x_dim + tmp_data[1]["action"].shape[1]
-            self.model = MLP(self.x_dim, self.cond_dim, learn_sigma=model.learn_sigma)
+            self.model = MLP(
+                self.x_dim,
+                self.cond_dim,
+                use_fp16=use_fp16,
+                learn_sigma=model.learn_sigma,
+            )
 
         self.model = self.model.to(dist_util.dev())
         self.batch_size = batch_size
@@ -94,7 +101,8 @@ class TrainLoop:
         self.lr_anneal_steps = lr_anneal_steps
         self.total_training_steps = int(total_training_steps)
 
-        self.use_amp = use_amp
+        self.use_fp16 = use_fp16
+
         self.beta1 = beta1
         self.beta2 = beta2
         self.eps = eps
@@ -106,15 +114,18 @@ class TrainLoop:
 
         self.opt = self._get_optimizer()
 
-        if self.use_amp:
-            self.scaler = th.cuda.amp.GradScaler()
-
         self.ema = [
             ExponentialMovingAverage(self.model.parameters(), decay=rate)
             for rate in range(len(self.ema_rate))
         ]
 
         self._load_checkpoint()
+
+        self.mp_trainer = MixedPrecisionTrainer(
+            model=self.model,
+            use_fp16=self.use_fp16,
+            fp16_scale_growth=fp16_scale_growth,
+        )
 
         if th.cuda.is_available():
             self.use_ddp = True
@@ -187,18 +198,15 @@ class TrainLoop:
 
     def run_step(self, batch, cond):
         self.forward_backward(batch, cond)
-        if self.use_amp:
-            self.scaler.step(self.opt)
-            self.scaler.update()
-        else:
-            self.opt.step()
-        for ema in self.ema:
-            ema.update(self.model.parameters())
+        took_step = self.mp_trainer.optimize(self.opt)
+        if took_step:
+            for ema in self.ema:
+                ema.update(self.model.parameters())
         self._anneal_lr()
         self.log_step()
 
     def forward_backward(self, batch, cond):
-        self.opt.zero_grad()
+        self.mp_trainer.zero_grad()
         for i in range(0, batch.shape[0], self.microbatch):
             micro = batch[i : i + self.microbatch].to(dist_util.dev())
             micro_cond = {
@@ -215,15 +223,11 @@ class TrainLoop:
                 t,
                 model_kwargs=micro_cond,
             )
-
-            with th.set_grad_enabled(True), th.amp.autocast(
-                device_type="cuda", dtype=th.float16, enabled=self.use_amp
-            ):
-                if last_batch or not self.use_ddp:
+            if last_batch or not self.use_ddp:
+                losses = compute_losses()
+            else:
+                with self.ddp_model.no_sync():
                     losses = compute_losses()
-                else:
-                    with self.ddp_model.no_sync():
-                        losses = compute_losses()
 
             if isinstance(self.schedule_sampler, LossAwareSampler):
                 self.schedule_sampler.update_with_local_losses(
@@ -234,10 +238,7 @@ class TrainLoop:
             log_loss_dict(
                 self.diffusion, t, {k: v * weights for k, v in losses.items()}
             )
-            if self.use_amp:
-                self.scaler.scale(loss).backward()
-            else:
-                loss.backward()
+            self.mp_trainer.backward(loss)
 
     def _anneal_lr(self):
         if not self.lr_anneal_steps:
@@ -466,17 +467,14 @@ class CMTrainLoop(TrainLoop):
 
     def run_step(self, batch, cond):
         self.forward_backward(batch, cond)
-        if self.use_amp:
-            self.scaler.step(self.opt)
-            self.scaler.update()
-        else:
-            self.opt.step()
-        for ema in self.ema:
-            ema.update(self.model.parameters())
-        if self.target_model:
-            self._update_target_ema()
-        if self.training_mode == "progdist":
-            self.reset_training_for_progdist()
+        took_step = self.mp_trainer.optimize(self.opt)
+        if took_step:
+            for ema in self.ema:
+                ema.update(self.model.parameters())
+            if self.target_model:
+                self._update_target_ema()
+            if self.training_mode == "progdist":
+                self.reset_training_for_progdist()
         self.step += 1
         self.global_step += 1
 
@@ -521,7 +519,7 @@ class CMTrainLoop(TrainLoop):
                 self.step = 0
 
     def forward_backward(self, batch, cond):
-        self.opt.zero_grad()
+        self.mp_trainer.zero_grad()
         for i in range(0, batch.shape[0], self.microbatch):
             micro = batch[i : i + self.microbatch].to(dist_util.dev())
             micro_cond = {
@@ -575,14 +573,11 @@ class CMTrainLoop(TrainLoop):
                 )
             else:
                 raise ValueError(f"Unknown training mode {self.training_mode}")
-            with th.set_grad_enabled(True), th.amp.autocast(
-                device_type="cuda", dtype=th.float16, enabled=self.use_amp
-            ):
-                if last_batch or not self.use_ddp:
+            if last_batch or not self.use_ddp:
+                losses = compute_losses()
+            else:
+                with self.ddp_model.no_sync():
                     losses = compute_losses()
-                else:
-                    with self.ddp_model.no_sync():
-                        losses = compute_losses()
 
             if isinstance(self.schedule_sampler, LossAwareSampler):
                 self.schedule_sampler.update_with_local_losses(
@@ -595,10 +590,7 @@ class CMTrainLoop(TrainLoop):
                 self.diffusion, t, {k: v * weights for k, v in losses.items()}
             )
 
-            if self.use_amp:
-                self.scaler.scale(loss).backward()
-            else:
-                loss.backward()
+            self.mp_trainer.backward(loss)
 
     def save(self):
         if dist_util.get_local_rank() == 0:
@@ -662,20 +654,17 @@ class SDETrainLoop(TrainLoop):
             th.nn.utils.clip_grad_norm_(
                 self.model.parameters(), max_norm=self.grad_clip
             )
-        if self.use_amp:
-            self.scaler.step(self.opt)
-            self.scaler.update()
-        else:
-            self.opt.step()
 
-        for ema in self.ema:
-            ema.update(self.model.parameters())
+        took_step = self.mp_trainer.optimize(self.opt)
+        if took_step:
+            for ema in self.ema:
+                ema.update(self.model.parameters())
 
         self._anneal_lr()
         self.log_step()
 
     def forward_backward(self, batch, cond):
-        self.opt.zero_grad()
+        self.mp_trainer.zero_grad()
         for i in range(0, batch.shape[0], self.microbatch):
             micro = batch[i : i + self.microbatch].to(dist_util.dev())
             micro_cond = {
@@ -708,22 +697,16 @@ class SDETrainLoop(TrainLoop):
                     model_kwargs=micro_cond,
                 )
 
-            with th.set_grad_enabled(True), th.amp.autocast(
-                device_type="cuda", dtype=th.float16, enabled=self.use_amp
-            ):
-                if last_batch or not self.use_ddp:
+            if last_batch or not self.use_ddp:
+                losses = compute_losses()
+            else:
+                with self.ddp_model.no_sync():
                     losses = compute_losses()
-                else:
-                    with self.ddp_model.no_sync():
-                        losses = compute_losses()
 
             loss = (losses["loss"]).mean()
             log_loss_dict(self.diffusion, t, {k: v for k, v in losses.items()})
 
-            if self.use_amp:
-                self.scaler.scale(loss).backward()
-            else:
-                loss.backward()
+            self.mp_trainer.backward(loss)
 
     def _continuous_loss(self, batch, t, model_kwargs):
         reduce_op = (
