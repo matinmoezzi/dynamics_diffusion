@@ -71,6 +71,7 @@ class TrainLoop:
             self.cond_dim = self.x_dim + tmp_data[1]["action"].shape[1]
             self.model = MLP(self.x_dim, self.cond_dim, learn_sigma=model.learn_sigma)
 
+        self.model = self.model.to(dist_util.dev())
         self.batch_size = batch_size
         self.microbatch = microbatch if microbatch > 0 else batch_size
         self.lr = lr
