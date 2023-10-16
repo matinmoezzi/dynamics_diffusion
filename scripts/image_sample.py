@@ -52,19 +52,18 @@ def main():
             cfg.model_cfg is not None or cfg.model_cfg != ""
         ), "Model config not found."
         model_cfg = OmegaConf.load(abs_path / ".." / cfg.model_cfg)
+        model_cfg["class_cond"] = cfg["class_cond"]
+        model_cfg["image_size"] = cfg["image_size"]
 
         assert (
             cfg.diffusion_cfg is not None or cfg.diffusion_cfg != ""
         ), "Diffusion config not found."
         diffusion_cfg = OmegaConf.load(abs_path / ".." / cfg.diffusion_cfg)
+        diffusion_cfg["learn_sigma"] = cfg.ddpm_sampler["learn_sigma"]
 
         assert cfg.sampler is not None or cfg.sampler != "", "Invalid Sampler."
         sampler = cfg.sampler
-
-        if sampler == "cm":
-            cm_training_mode = cfg.cm_sampler.training_mode
-        if sampler == "sde":
-            continuous = model_cfg.continuous
+        model_dict = th.load(model_path, map_location="cpu")
 
     else:
         assert Path(cfg.model_dir, ".hydra").is_dir(), "Hydra configuration not found."
@@ -82,22 +81,18 @@ def main():
 
         sampler = hydra_cfg.hydra.runtime.choices.trainer
 
+        snapshot = th.load(model_path, map_location=dist_util.dev())
+        model_dict = snapshot["model_state"]
+
     log_dir = abs_path / f"../image_samples/{sampler}/{datetime.now():%Y%m%d-%H%M%S}"
-    if th.cuda.is_available():
-        dist_util.setup_dist()
+    dist_util.setup_dist()
     logger.configure(dir=str(log_dir), format_strs=["stdout"])
 
     logger.log("creating model and diffusion...")
 
     model = hydra.utils.instantiate(model_cfg)
-    if dist.is_initialized():
-        loc = f"cuda:{os.environ['LOCAL_RANK']}"
-    else:
-        loc = "cpu"
-    snapshot = th.load(model_path, map_location=loc)
-    model.load_state_dict(snapshot["model"])
-    model = model.to(os.environ["LOCAL_RANK"])
-    model = DDP(model, device_ids=[os.environ["LOCAL_RANK"]])
+    model.load_state_dict(model_dict)
+    model = model.to(dist_util.dev())
     model.eval()
 
     model_kwargs = {}

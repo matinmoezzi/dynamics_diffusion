@@ -58,8 +58,6 @@ class TrainLoop:
         beta2=0.999,
         eps=1e-8,
     ):
-        self.local_rank = int(os.environ["LOCAL_RANK"])
-        self.global_rank = int(os.environ["RANK"])
         self.dataset = dataset
         self.diffusion = diffusion
         if isinstance(model, th.nn.Module):
@@ -73,7 +71,7 @@ class TrainLoop:
             self.cond_dim = self.x_dim + tmp_data[1]["action"].shape[1]
             self.model = MLP(self.x_dim, self.cond_dim, learn_sigma=model.learn_sigma)
 
-        self.model = self.model.to(self.local_rank)
+        self.model = self.model.to(dist_util.dev())
         self.batch_size = batch_size
         self.microbatch = microbatch if microbatch > 0 else batch_size
         self.lr = lr
@@ -118,9 +116,9 @@ class TrainLoop:
 
         self._load_checkpoint()
 
-        if th.cuda.is_available():
+        if dist.is_initialized():
             self.use_ddp = True
-            self.ddp_model = DDP(self.model, device_ids=[self.local_rank])
+            self.ddp_model = DDP(self.model, device_ids=[dist_util.get_local_rank()])
             self.model = self.ddp_model
         else:
             if dist.get_world_size() > 1:
@@ -140,7 +138,7 @@ class TrainLoop:
                 f"loading model, ema, optimizer from checkpoint: {self.resume_checkpoint}..."
             )
             self.snapshot = th.load(
-                self.resume_checkpoint, map_location=f"cuda:{self.local_rank}"
+                self.resume_checkpoint, map_location=dist_util.dev()
             )
             self.step = self.resume_step = self.snapshot["step"]
             self.model.load_state_dict(self.snapshot["model_state"])
@@ -173,11 +171,14 @@ class TrainLoop:
             self.run_step(batch, cond)
             if self.step % self.log_interval == 0:
                 logger.dumpkvs()
-            if self.local_rank == 0 and self.step % self.save_interval == 0:
+            if dist_util.get_local_rank() == 0 and self.step % self.save_interval == 0:
                 self.save()
             self.step += 1
         # Save the last checkpoint if it wasn't already saved.
-        if self.local_rank == 0 and (self.step - 1) % self.save_interval != 0:
+        if (
+            dist_util.get_local_rank() == 0
+            and (self.step - 1) % self.save_interval != 0
+        ):
             self.save()
 
     def run_step(self, batch, cond):
@@ -195,13 +196,15 @@ class TrainLoop:
     def forward_backward(self, batch, cond):
         self.opt.zero_grad()
         for i in range(0, batch.shape[0], self.microbatch):
-            micro = batch[i : i + self.microbatch].to(self.local_rank)
+            micro = batch[i : i + self.microbatch].to(dist_util.dev())
             micro_cond = {
-                k: v[i : i + self.microbatch].to(self.local_rank)
+                k: v[i : i + self.microbatch].to(dist_util.dev())
                 for k, v in cond.items()
             }
             last_batch = (i + self.microbatch) >= batch.shape[0]
-            t, weights = self.schedule_sampler.sample(micro.shape[0], self.local_rank)
+            t, weights = self.schedule_sampler.sample(
+                micro.shape[0], dist_util.get_local_rank()
+            )
 
             compute_losses = functools.partial(
                 self.diffusion.training_losses,
@@ -365,7 +368,7 @@ class CMTrainLoop(TrainLoop):
                 dist_util.load_state_dict(teacher_model_path, map_location="cpu"),
             )
 
-            self.teacher_model.to(self.local_rank)
+            self.teacher_model.to(dist_util.dev())
             self.teacher_model.eval()
 
             for dst, src in zip(
@@ -391,7 +394,7 @@ class CMTrainLoop(TrainLoop):
         else:
             raise ValueError(f"Unknown model {cfg.trainer.model.name}")
 
-        self.target_model.to(self.local_rank)
+        self.target_model.to(dist_util.dev())
         self.target_model.train()
 
         for dst, src in zip(self.target_model.parameters(), self.model.parameters()):
@@ -454,7 +457,7 @@ class CMTrainLoop(TrainLoop):
                 logger.dumpkvs()
 
         # Save the last checkpoint if it wasn't already saved.
-        if self.local_rank == 0 and not saved:
+        if dist_util.get_local_rank() == 0 and not saved:
             self.save()
 
     def run_step(self, batch, cond):

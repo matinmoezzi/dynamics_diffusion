@@ -41,5 +41,16 @@ def dev():
     Get the device to use for torch.distributed.
     """
     if th.cuda.is_available():
+        if dist.is_initialized():
+            return th.device(f"cuda:{os.environ['LOCAL_RANK']}")
         return th.device(f"cuda")
     return th.device("cpu")
+
+
+def get_local_rank():
+    """
+    Get the local rank of the current process.
+    """
+    if not dist.is_initialized():
+        return 0
+    return int(os.environ["LOCAL_RANK"])
