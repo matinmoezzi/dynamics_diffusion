@@ -4,17 +4,17 @@ defaults:
   - /diffusion: gaussian
   - /dataset: cifar10 
 _target_: dynamics_diffusion.train_util.TrainLoop
-total_training_steps: 1e6
-schedule_sampler: "uniform"
+total_training_steps: 50000
+schedule_sampler: "loss-second-moment"
 lr: 1e-4
 weight_decay: 0.0
 lr_anneal_steps: 0
 batch_size: 128
 microbatch: -1  # -1 disables microbatches
 ema_rate: "0.9999"  # comma-separated list of EMA values
-log_interval: 1000
-save_interval: 50000
-resume_checkpoint: ""
+log_interval: 500
+save_interval: 10000
+resume_checkpoint: "/home/uoft/matin/dynamics_diffusion/logs/ddpm/cifar10/gaussian/UNet/20231014-163849"
 opt_name: "AdamW"
 use_amp: False
 
