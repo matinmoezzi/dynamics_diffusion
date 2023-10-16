@@ -7,6 +7,8 @@ import torch as th
 import torch.nn as nn
 import torch.nn.functional as F
 
+from dynamics_diffusion.fp16_util import convert_module_to_f16, convert_module_to_f32
+
 from .nn import (
     checkpoint,
     conv_nd,
@@ -554,6 +556,7 @@ class UNetModel(nn.Module):
         model_channels,
         out_channels,
         num_res_blocks,
+        use_fp16,
         attention_resolutions,
         dropout=0,
         channel_mult=(1, 2, 4, 8),
@@ -573,6 +576,7 @@ class UNetModel(nn.Module):
         if num_heads_upsample == -1:
             num_heads_upsample = num_heads
 
+        self.dtype = th.float16 if use_fp16 else th.float32
         self.image_size = image_size
         self.in_channels = in_channels
         self.model_channels = model_channels
@@ -736,6 +740,22 @@ class UNetModel(nn.Module):
             zero_module(conv_nd(dims, input_ch, out_channels, 3, padding=1)),
         )
 
+    def convert_to_fp16(self):
+        """
+        Convert the torso of the model to float16.
+        """
+        self.input_blocks.apply(convert_module_to_f16)
+        self.middle_block.apply(convert_module_to_f16)
+        self.output_blocks.apply(convert_module_to_f16)
+
+    def convert_to_fp32(self):
+        """
+        Convert the torso of the model to float32.
+        """
+        self.input_blocks.apply(convert_module_to_f32)
+        self.middle_block.apply(convert_module_to_f32)
+        self.output_blocks.apply(convert_module_to_f32)
+
     def forward(self, x, timesteps, y=None):
         """
         Apply the model to an input batch.
@@ -756,7 +776,7 @@ class UNetModel(nn.Module):
             assert y.shape == (x.shape[0],)
             emb = emb + self.label_emb(y)
 
-        h = x
+        h = x.type(self.dtype)
         for module in self.input_blocks:
             h = module(h, emb)
             hs.append(h)
@@ -772,6 +792,7 @@ def create_unet_model(
     image_size,
     num_channels,
     num_res_blocks,
+    use_fp16,
     channel_mult="",
     learn_sigma=False,
     class_cond=False,
@@ -822,4 +843,5 @@ def create_unet_model(
         use_scale_shift_norm=use_scale_shift_norm,
         resblock_updown=resblock_updown,
         use_new_attention_order=use_new_attention_order,
+        use_fp16=use_fp16,
     )

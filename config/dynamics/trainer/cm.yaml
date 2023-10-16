@@ -27,5 +27,5 @@ log_interval: 5000
 save_interval: 100000
 resume_checkpoint: ""
 opt_name: "AdamW"
-use_fp16: True
+use_fp16: False
 fp16_scale_growth: 1e-3

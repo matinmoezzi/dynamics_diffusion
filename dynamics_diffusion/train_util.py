@@ -11,7 +11,12 @@ import torch.distributed as dist
 from torch.nn.parallel.distributed import DistributedDataParallel as DDP
 from torch.optim import RAdam
 from tqdm import trange
-from dynamics_diffusion.fp16_util import MixedPrecisionTrainer
+from dynamics_diffusion.fp16_util import (
+    MixedPrecisionTrainer,
+    get_param_groups_and_shapes,
+    make_master_params,
+    master_params_to_model_params,
+)
 from dynamics_diffusion.script_util import ConfigStore, create_ema_and_scales_fn
 from dynamics_diffusion.sde_models.ema import ExponentialMovingAverage
 from .mlp import MLP
@@ -410,6 +415,12 @@ class CMTrainLoop(TrainLoop):
                 self.target_model.load_state_dict(self.snapshot["target_model_state"])
             self.target_model.requires_grad_(False)
             self.target_model.train()
+            self.target_model_param_groups_and_shapes = get_param_groups_and_shapes(
+                self.target_model.named_parameters()
+            )
+            self.target_model_master_params = make_master_params(
+                self.target_model_param_groups_and_shapes
+            )
 
         if self.teacher_model:
             if self.resume_checkpoint:
@@ -475,8 +486,8 @@ class CMTrainLoop(TrainLoop):
                 self._update_target_ema()
             if self.training_mode == "progdist":
                 self.reset_training_for_progdist()
-        self.step += 1
-        self.global_step += 1
+            self.step += 1
+            self.global_step += 1
 
         self._anneal_lr()
         self.log_step()
@@ -485,9 +496,13 @@ class CMTrainLoop(TrainLoop):
         target_ema, scales = self.ema_scale_fn(self.global_step)
         with th.no_grad():
             update_ema(
-                self.target_model.parameters(),
-                self.model.parameters(),
+                self.target_model_master_params,
+                self.mp_trainer.master_params,
                 rate=target_ema,
+            )
+            master_params_to_model_params(
+                self.target_model_param_groups_and_shapes,
+                self.target_model_master_params,
             )
 
     def reset_training_for_progdist(self):
@@ -504,7 +519,7 @@ class CMTrainLoop(TrainLoop):
                     )
                 # reset optimizer
                 self.opt = RAdam(
-                    self.model.parameters(),
+                    self.mp_trainer.master_params,
                     lr=self.lr,
                     weight_decay=self.weight_decay,
                 )
@@ -512,7 +527,6 @@ class CMTrainLoop(TrainLoop):
                     ExponentialMovingAverage(self.model.parameters(), decay=rate)
                     for rate in range(len(self.ema_rate))
                 ]
-
                 if scales == 2:
                     self.lr_anneal_steps *= 2
                 self.teacher_model.eval()
@@ -573,6 +587,7 @@ class CMTrainLoop(TrainLoop):
                 )
             else:
                 raise ValueError(f"Unknown training mode {self.training_mode}")
+
             if last_batch or not self.use_ddp:
                 losses = compute_losses()
             else:
@@ -589,7 +604,6 @@ class CMTrainLoop(TrainLoop):
             log_loss_dict(
                 self.diffusion, t, {k: v * weights for k, v in losses.items()}
             )
-
             self.mp_trainer.backward(loss)
 
     def save(self):

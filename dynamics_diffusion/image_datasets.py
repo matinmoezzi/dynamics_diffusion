@@ -1,4 +1,5 @@
 import math
+import os
 import random
 
 from PIL import Image
@@ -39,6 +40,7 @@ def load_data(
     """
     if not data_dir:
         raise ValueError("unspecified data directory")
+    data_dir = os.path.join(os.getcwd(), data_dir)
     all_files = _list_image_files_recursively(data_dir)
     classes = None
     if class_cond:

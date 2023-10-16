@@ -1,6 +1,6 @@
 defaults:
   - _self_
-  - trainer: sde
+  - trainer: cm
 format_strs:
   - log
   - stdout
