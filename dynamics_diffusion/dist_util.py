@@ -52,7 +52,7 @@ class DistUtil:
         Get the device to use for torch.distributed.
         """
         if cls.device == "cpu":
-            return th.device(f"cpu:{os.environ['LOCAL_RANK']}")
+            return th.device(f"cpu")
         else:
             if th.cuda.is_available():
                 if dist.is_initialized():
