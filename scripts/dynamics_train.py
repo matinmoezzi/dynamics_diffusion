@@ -12,6 +12,19 @@ from dynamics_diffusion import dist_util, logger
 from dynamics_diffusion.script_util import ConfigStore
 
 
+def steps_to_human_readable(step_count) -> str:
+    # Ensure the input is an integer
+    step_count = int(step_count)
+
+    # Convert to human-readable format
+    if step_count < 1000:
+        return str(step_count)
+    elif step_count < 1000000:
+        return f"{step_count/1000:.0f}K"  # for thousands
+    else:
+        return f"{step_count/1000000:.0f}M"  # for millions
+
+
 def sde_continuous_solver(node):
     if hasattr(node, "continuous"):
         if node.continuous:
@@ -36,6 +49,7 @@ def karras_distillation(training_mode):
 OmegaConf.register_new_resolver("sde_continuous_solver", sde_continuous_solver)
 OmegaConf.register_new_resolver("get_runtime_choice", get_runtime_choice)
 OmegaConf.register_new_resolver("karras_distillation", karras_distillation)
+OmegaConf.register_new_resolver("human_readable_steps", steps_to_human_readable)
 
 
 @hydra.main(
