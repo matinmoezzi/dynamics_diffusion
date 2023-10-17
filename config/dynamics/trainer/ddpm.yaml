@@ -1,20 +1,20 @@
 defaults:
   - _self_
-  - /model: UNet
+  - /model: MLP
   - /diffusion: gaussian
-  - /dataset: cifar10 
+  - /dataset: maze2d-umaze 
 _target_: dynamics_diffusion.train_util.TrainLoop
 total_training_steps: 50000
 schedule_sampler: "loss-second-moment"
 lr: 1e-4
 weight_decay: 0.0
 lr_anneal_steps: 0
-batch_size: 128
+batch_size: 1
 microbatch: -1  # -1 disables microbatches
 ema_rate: "0.9999"  # comma-separated list of EMA values
 log_interval: 500
 save_interval: 5000
-resume_checkpoint: "/home/uoft/matin/dynamics_diffusion/logs/ddpm/cifar10/gaussian/UNet/20231016-082349"
+resume_checkpoint: ""
 opt_name: "AdamW"
 use_fp16: False
 fp16_scale_growth: 1e-3
