@@ -2,7 +2,7 @@ defaults:
   - _self_
   - /model: MLP
   - /diffusion: VESDE
-  - /dataset: kitchen-mixed 
+  - /dataset: maze2d-umaze 
 _target_: dynamics_diffusion.train_util.SDETrainLoop
 
 continuous: True
