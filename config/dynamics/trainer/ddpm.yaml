@@ -13,7 +13,7 @@ batch_size: 128
 microbatch: -1  # -1 disables microbatches
 ema_rate: "0.9999"  # comma-separated list of EMA values
 log_interval: 500
-save_interval: 10000
+save_interval: 5000
 resume_checkpoint: "/home/uoft/matin/dynamics_diffusion/logs/ddpm/cifar10/gaussian/UNet/20231016-082349"
 opt_name: "AdamW"
 use_fp16: False
