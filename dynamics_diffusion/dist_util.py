@@ -68,3 +68,12 @@ class DistUtil:
         if not dist.is_initialized():
             return 0
         return int(os.environ["LOCAL_RANK"])
+
+    @classmethod
+    def get_global_rank(cls):
+        """
+        Get the local rank of the current process.
+        """
+        if not dist.is_initialized():
+            return 0
+        return int(os.environ["RANK"])

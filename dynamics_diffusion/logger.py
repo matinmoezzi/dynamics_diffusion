@@ -34,7 +34,8 @@ class SeqWriter(object):
 
 
 class HumanOutputFormat(KVWriter, SeqWriter):
-    def __init__(self, filename_or_file):
+    def __init__(self, filename_or_file, suffix=""):
+        self.suffix = suffix
         if isinstance(filename_or_file, str):
             self.file = open(filename_or_file, "wt")
             self.own_file = True
@@ -64,10 +65,13 @@ class HumanOutputFormat(KVWriter, SeqWriter):
             valwidth = max(map(len, key2str.values()))
 
         # Write out the data
-        suffix = f"PROC{dist.get_rank()}" if dist.is_initialized() else ""
-        dash_len = keywidth + valwidth + len(suffix)
+        dash_len = keywidth + valwidth + len(self.suffix)
         suffix_dashes = "-" * dash_len
-        dashes = "-" * (dash_len // 2) + suffix + "-" * (dash_len // 2)
+        dashes = (
+            "-" * ((dash_len - len(self.suffix)) // 2)
+            + self.suffix
+            + "-" * ((dash_len - len(self.suffix)) // 2)
+        )
         lines = [dashes]
         for key, val in sorted(key2str.items(), key=lambda kv: kv[0].lower()):
             lines.append(
@@ -125,9 +129,11 @@ class TensorBoardOutputFormat(KVWriter):
 def make_output_format(format, ev_dir, log_suffix=""):
     os.makedirs(ev_dir, exist_ok=True)
     if format == "stdout":
-        return HumanOutputFormat(sys.stdout)
+        return HumanOutputFormat(sys.stdout, suffix=log_suffix)
     elif format == "log":
-        return HumanOutputFormat(osp.join(ev_dir, "log%s.txt" % log_suffix))
+        return HumanOutputFormat(
+            osp.join(ev_dir, "log%s.txt" % log_suffix), suffix=log_suffix
+        )
     elif format == "tensorboard":
         return TensorBoardOutputFormat(osp.join(ev_dir, "tb%s" % log_suffix))
     else:
@@ -334,9 +340,6 @@ def configure(dir=None, format_strs=["log", "stdout"], comm=None, log_suffix="")
     assert isinstance(dir, str)
     dir = os.path.expanduser(dir)
     os.makedirs(os.path.expanduser(dir), exist_ok=True)
-
-    if dist.is_initialized():
-        log_suffix = log_suffix + f"[PROC{dist.get_rank()}]"
 
     format_strs = filter(None, format_strs)
     output_formats = [make_output_format(f, dir, log_suffix) for f in format_strs]

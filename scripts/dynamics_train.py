@@ -62,7 +62,12 @@ def main(cfg: DictConfig):
 
     log_dir = Path(HydraConfig.get().run.dir, "train").resolve()
     dist_util.DistUtil.setup_dist(device=cfg.device)
-    logger.configure(dir=str(log_dir), format_strs=cfg.format_strs)
+    log_suffix = (
+        f"[{dist_util.DistUtil.device.upper()}:{dist_util.DistUtil.get_global_rank()}]"
+    )
+    logger.configure(
+        dir=str(log_dir), format_strs=cfg.format_strs, log_suffix=log_suffix
+    )
 
     trainer = hydra.utils.instantiate(cfg.trainer)
 
