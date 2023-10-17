@@ -1,13 +1,13 @@
 # @package _global_
-env_name: mbpo_ant
+env_name: mbpo_walker2d
 num_train_steps: 2e6
 eval_freq: 25000
 
 # Environment-specific overrides:
 learn_temp:
-  init_targ_entr: 0
-  final_targ_entr: -2
-  entr_decay_factor: 4.0
+  init_targ_entr: -2
+  final_targ_entr: -8
+  entr_decay_factor: 0.0625
 
 agent:
   horizon: 3

@@ -13,7 +13,7 @@ import random
 import math
 import time
 
-from sacsvg.env import dmc
+from .env import dmc
 
 from gym import spaces
 
@@ -95,7 +95,7 @@ def make_norm_env(cfg):
             return env.env.seed(seed)
 
     elif cfg.env_name == "pets_cheetah":
-        from sacsvg.env import register_pets_environments
+        from .env import register_pets_environments
 
         register_pets_environments()
         env = gym.make("PetsCheetah-v0")
@@ -114,7 +114,7 @@ def make_norm_env(cfg):
             return env.env.seed(seed)
 
     elif cfg.env_name == "pets_reacher":
-        from sacsvg.env import register_pets_environments
+        from .env import register_pets_environments
 
         register_pets_environments()
         env = gym.make("PetsReacher-v0")
@@ -133,7 +133,7 @@ def make_norm_env(cfg):
             return env.env.seed(seed)
 
     elif cfg.env_name == "pets_pusher":
-        from sacsvg.env import register_pets_environments
+        from .env import register_pets_environments
 
         register_pets_environments()
         env = gym.make("PetsPusher-v0")
@@ -205,7 +205,7 @@ def make_norm_env(cfg):
             return env.env.seed(seed)
 
     elif cfg.env_name == "mbpo_cheetah":
-        from sacsvg.env import register_mbpo_environments
+        from .env import register_mbpo_environments
 
         register_mbpo_environments()
         env = gym.make("HalfCheetah-v2")
@@ -224,7 +224,7 @@ def make_norm_env(cfg):
             return env.env.seed(seed)
 
     elif cfg.env_name == "mbpo_humanoid":
-        from sacsvg.env import register_mbpo_environments
+        from .env import register_mbpo_environments
 
         register_mbpo_environments()
         env = gym.make("HumanoidTruncatedObs-v2")

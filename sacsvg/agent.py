@@ -6,8 +6,6 @@ import copy
 import torch
 import torch.nn.functional as F
 
-import hydra
-
 from . import utils
 
 
@@ -39,8 +37,8 @@ class SACSVGAgent(Agent):
         action_dim,
         action_range,
         device,
-        num_train_steps,
         dx,
+        num_train_steps,
         temp,
         actor,
         actor_lr,
@@ -125,9 +123,10 @@ class SACSVGAgent(Agent):
         self.actor_detach_rho = actor_detach_rho
         self.actor_dx_threshold = actor_dx_threshold
 
+        self.critic = None
         if critic is not None:
             self.critic = critic.to(self.device)
-            self.critic_target = copy.deepcopy(critic)
+            self.critic_target = copy.deepcopy(self.critic)
             self.critic_target.load_state_dict(self.critic.state_dict())
             self.critic_target.train()
             self.critic_opt = torch.optim.Adam(self.critic.parameters(), lr=critic_lr)

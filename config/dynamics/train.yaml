@@ -5,6 +5,7 @@ device: "cpu" # "cuda" or "cpu"
 format_strs:
   - log
   - stdout
+  - csv
   - tensorboard
 hydra:
   run:

@@ -102,6 +102,43 @@ class HumanOutputFormat(KVWriter, SeqWriter):
             self.file.close()
 
 
+class CSVOutputFormat(KVWriter):
+    def __init__(self, filename):
+        self.file = open(filename, "w+t")
+        self.keys = []
+        self.sep = ","
+
+    def writekvs(self, kvs):
+        # Add our current row to the history
+        extra_keys = list(kvs.keys() - self.keys)
+        extra_keys.sort()
+        if extra_keys:
+            self.keys.extend(extra_keys)
+            self.file.seek(0)
+            lines = self.file.readlines()
+            self.file.seek(0)
+            for i, k in enumerate(self.keys):
+                if i > 0:
+                    self.file.write(",")
+                self.file.write(k)
+            self.file.write("\n")
+            for line in lines[1:]:
+                self.file.write(line[:-1])
+                self.file.write(self.sep * len(extra_keys))
+                self.file.write("\n")
+        for i, k in enumerate(self.keys):
+            if i > 0:
+                self.file.write(",")
+            v = kvs.get(k)
+            if v is not None:
+                self.file.write(str(v))
+        self.file.write("\n")
+        self.file.flush()
+
+    def close(self):
+        self.file.close()
+
+
 class TensorBoardOutputFormat(KVWriter):
     """
     Dumps key/value pairs into TensorBoard's numeric format.
@@ -134,6 +171,8 @@ def make_output_format(format, ev_dir, log_suffix=""):
         return HumanOutputFormat(
             osp.join(ev_dir, "log%s.txt" % log_suffix), suffix=log_suffix
         )
+    elif format == "csv":
+        return CSVOutputFormat(osp.join(ev_dir, "progress%s.csv" % log_suffix))
     elif format == "tensorboard":
         return TensorBoardOutputFormat(osp.join(ev_dir, "tb%s" % log_suffix))
     else:

@@ -5,30 +5,42 @@ import numpy as np
 import torch
 import copy
 import os
+import sys
 import shutil
 import time
 import pickle as pkl
 
-import hydra
-from tqdm import tqdm
+from setproctitle import setproctitle
 
-from sacsvg.logger import Logger
+setproctitle("sacsvg")
+
+import hydra
+
+from sacsvg import sweeper
+
 from sacsvg.video import VideoRecorder
-from sacsvg import utils
+from sacsvg import agent, utils, temp, dx, actor, critic
+from sacsvg.logger import Logger
 from sacsvg.replay_buffer import ReplayBuffer
+
+from IPython.core import ultratb
+
+sys.excepthook = ultratb.FormattedTB(mode="Plain", color_scheme="Neutral", call_pdb=1)
 
 
 class Workspace(object):
-    def __init__(self, cfg, log_dir):
-        self.work_dir = log_dir
+    def __init__(self, cfg):
+        self.work_dir = os.getcwd()
+        print(f"workspace: {self.work_dir}")
+
+        self.cfg = cfg
+
         self.logger = Logger(
             self.work_dir,
             save_tb=cfg.log_save_tb,
             log_frequency=cfg.log_freq,
             agent="sac_svg",
         )
-
-        self.cfg = cfg
 
         utils.set_seed_everywhere(cfg.seed)
         self.device = torch.device(cfg.device)
@@ -103,7 +115,6 @@ class Workspace(object):
         self.agent.reset()
         obs = self.env.reset()
 
-        pbar = tqdm(total=self.cfg.num_train_steps, initial=self.step)
         start_time = time.time()
         while self.step < self.cfg.num_train_steps:
             if self.done:
@@ -186,8 +197,6 @@ class Workspace(object):
             self.step += 1
             self.steps_since_eval += 1
             self.steps_since_save += 1
-            pbar.update(1)
-        pbar.close()
 
         if self.steps_since_eval > 1:
             self.logger.log("eval/episode", self.episode, self.step)
@@ -231,3 +240,24 @@ class Workspace(object):
 
         if os.path.exists(self.replay_dir):
             self.replay_buffer.load_data(self.replay_dir)
+
+
+@hydra.main(version_base=None, config_path="../config/sacsvg", config_name="train")
+def main(cfg):
+    # this needs to be done for successful pickle
+    SCRIPT_DIR = os.path.dirname(os.path.realpath(__file__))
+    from train_sacsvg import Workspace as W
+
+    fname = os.getcwd() + "/latest.pkl"
+    if os.path.exists(fname):
+        print(f"Resuming fom {fname}")
+        with open(fname, "rb") as f:
+            workspace = pkl.load(f)
+    else:
+        workspace = W(cfg)
+
+    workspace.run()
+
+
+if __name__ == "__main__":
+    main()
