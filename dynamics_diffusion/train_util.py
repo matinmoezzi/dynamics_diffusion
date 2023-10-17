@@ -83,7 +83,7 @@ class TrainLoop:
                 learn_sigma=model.learn_sigma,
             )
 
-        self.model = self.model.to(dist_util.dev())
+        self.model = self.model.to(dist_util.DistUtil.dev())
         self.batch_size = batch_size
         self.microbatch = microbatch if microbatch > 0 else batch_size
         self.lr = lr
@@ -132,12 +132,22 @@ class TrainLoop:
             fp16_scale_growth=fp16_scale_growth,
         )
 
-        if th.cuda.is_available():
+        if dist_util.DistUtil.device == "cpu":
             self.use_ddp = True
             self.ddp_model = DDP(
                 self.model,
-                device_ids=[dist_util.dev()],
-                output_device=dist_util.dev(),
+                broadcast_buffers=False,
+                bucket_cap_mb=128,
+                find_unused_parameters=False,
+            )
+            self.model = self.ddp_model
+
+        elif th.cuda.is_available():
+            self.use_ddp = True
+            self.ddp_model = DDP(
+                self.model,
+                device_ids=[dist_util.DistUtil.dev()],
+                output_device=dist_util.DistUtil.dev(),
                 broadcast_buffers=False,
                 bucket_cap_mb=128,
                 find_unused_parameters=False,
@@ -161,7 +171,7 @@ class TrainLoop:
                 f"loading model, ema, optimizer from checkpoint: {self.resume_checkpoint}..."
             )
             self.snapshot = th.load(
-                self.resume_checkpoint, map_location=dist_util.dev()
+                self.resume_checkpoint, map_location=dist_util.DistUtil.dev()
             )
             self.step = self.resume_step = self.snapshot["step"]
             self.model.load_state_dict(self.snapshot["model_state"])
@@ -213,13 +223,15 @@ class TrainLoop:
     def forward_backward(self, batch, cond):
         self.mp_trainer.zero_grad()
         for i in range(0, batch.shape[0], self.microbatch):
-            micro = batch[i : i + self.microbatch].to(dist_util.dev())
+            micro = batch[i : i + self.microbatch].to(dist_util.DistUtil.dev())
             micro_cond = {
-                k: v[i : i + self.microbatch].to(dist_util.dev())
+                k: v[i : i + self.microbatch].to(dist_util.DistUtil.dev())
                 for k, v in cond.items()
             }
             last_batch = (i + self.microbatch) >= batch.shape[0]
-            t, weights = self.schedule_sampler.sample(micro.shape[0], dist_util.dev())
+            t, weights = self.schedule_sampler.sample(
+                micro.shape[0], dist_util.DistUtil.dev()
+            )
 
             compute_losses = functools.partial(
                 self.diffusion.training_losses,
@@ -258,7 +270,7 @@ class TrainLoop:
         logger.logkv("samples", (self.step + 1) * self.global_batch)
 
     def save(self):
-        if dist_util.get_local_rank() == 0:
+        if dist_util.DistUtil.get_local_rank() == 0:
             snapshot = {}
             model = self.model
             raw_model = model.module if hasattr(model, "module") else model
@@ -378,7 +390,7 @@ class CMTrainLoop(TrainLoop):
                 dist_util.load_state_dict(teacher_model_path, map_location="cpu"),
             )
 
-            self.teacher_model.to(dist_util.dev())
+            self.teacher_model.to(dist_util.DistUtil.dev())
             self.teacher_model.eval()
 
             for dst, src in zip(
@@ -404,7 +416,7 @@ class CMTrainLoop(TrainLoop):
         else:
             raise ValueError(f"Unknown model {cfg.trainer.model.name}")
 
-        self.target_model.to(dist_util.dev())
+        self.target_model.to(dist_util.DistUtil.dev())
         self.target_model.train()
 
         for dst, src in zip(self.target_model.parameters(), self.model.parameters()):
@@ -535,13 +547,15 @@ class CMTrainLoop(TrainLoop):
     def forward_backward(self, batch, cond):
         self.mp_trainer.zero_grad()
         for i in range(0, batch.shape[0], self.microbatch):
-            micro = batch[i : i + self.microbatch].to(dist_util.dev())
+            micro = batch[i : i + self.microbatch].to(dist_util.DistUtil.dev())
             micro_cond = {
-                k: v[i : i + self.microbatch].to(dist_util.dev())
+                k: v[i : i + self.microbatch].to(dist_util.DistUtil.dev())
                 for k, v in cond.items()
             }
             last_batch = (i + self.microbatch) >= batch.shape[0]
-            t, weights = self.schedule_sampler.sample(micro.shape[0], dist_util.dev())
+            t, weights = self.schedule_sampler.sample(
+                micro.shape[0], dist_util.DistUtil.dev()
+            )
 
             ema, num_scales = self.ema_scale_fn(self.global_step)
             if self.training_mode == "progdist":
@@ -607,7 +621,7 @@ class CMTrainLoop(TrainLoop):
             self.mp_trainer.backward(loss)
 
     def save(self):
-        if dist_util.get_local_rank() == 0:
+        if dist_util.DistUtil.get_local_rank() == 0:
             import blobfile as bf
 
             step = self.global_step
@@ -680,16 +694,16 @@ class SDETrainLoop(TrainLoop):
     def forward_backward(self, batch, cond):
         self.mp_trainer.zero_grad()
         for i in range(0, batch.shape[0], self.microbatch):
-            micro = batch[i : i + self.microbatch].to(dist_util.dev())
+            micro = batch[i : i + self.microbatch].to(dist_util.DistUtil.dev())
             micro_cond = {
-                k: v[i : i + self.microbatch].to(dist_util.dev())
+                k: v[i : i + self.microbatch].to(dist_util.DistUtil.dev())
                 for k, v in cond.items()
             }
             last_batch = (i + self.microbatch) >= batch.shape[0]
 
             if self.continuous:
                 t = (
-                    th.rand(batch.shape[0], device=dist_util.dev())
+                    th.rand(batch.shape[0], device=dist_util.DistUtil.dev())
                     * (self.diffusion.T - self.eps)
                     + self.eps
                 )
@@ -701,7 +715,10 @@ class SDETrainLoop(TrainLoop):
                     not self.likelihood_weighting
                 ), "Likelihood weighting is not supported for original SMLD/DDPM training."
                 t = th.randint(
-                    0, self.diffusion.N, (micro.shape[0],), device=dist_util.dev()
+                    0,
+                    self.diffusion.N,
+                    (micro.shape[0],),
+                    device=dist_util.DistUtil.dev(),
                 )
                 compute_losses = functools.partial(
                     self.diffusion.training_losses,

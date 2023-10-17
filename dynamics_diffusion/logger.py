@@ -64,7 +64,7 @@ class HumanOutputFormat(KVWriter, SeqWriter):
             valwidth = max(map(len, key2str.values()))
 
         # Write out the data
-        suffix = f"GPU{dist.get_rank()}" if dist.is_initialized() else ""
+        suffix = f"PROC{dist.get_rank()}" if dist.is_initialized() else ""
         dash_len = keywidth + valwidth + len(suffix)
         suffix_dashes = "-" * dash_len
         dashes = "-" * (dash_len // 2) + suffix + "-" * (dash_len // 2)
@@ -336,7 +336,7 @@ def configure(dir=None, format_strs=["log", "stdout"], comm=None, log_suffix="")
     os.makedirs(os.path.expanduser(dir), exist_ok=True)
 
     if dist.is_initialized():
-        log_suffix = log_suffix + f"[GPU{dist.get_rank()}]"
+        log_suffix = log_suffix + f"[PROC{dist.get_rank()}]"
 
     format_strs = filter(None, format_strs)
     output_formats = [make_output_format(f, dir, log_suffix) for f in format_strs]

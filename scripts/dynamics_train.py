@@ -47,7 +47,7 @@ def main(cfg: DictConfig):
     ConfigStore.set_config(cfg)
 
     log_dir = Path(HydraConfig.get().run.dir, "train").resolve()
-    dist_util.setup_dist()
+    dist_util.DistUtil.setup_dist(device=cfg.device)
     logger.configure(dir=str(log_dir), format_strs=cfg.format_strs)
 
     trainer = hydra.utils.instantiate(cfg.trainer)

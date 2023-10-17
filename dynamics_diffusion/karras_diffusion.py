@@ -739,8 +739,12 @@ def iterative_colorization(
             matrix = -matrix
         return matrix
 
-    Q = th.from_numpy(obtain_orthogonal_matrix()).to(dist_util.dev()).to(th.float32)
-    mask = th.zeros(*x.shape[1:], device=dist_util.dev())
+    Q = (
+        th.from_numpy(obtain_orthogonal_matrix())
+        .to(dist_util.DistUtil.dev())
+        .to(th.float32)
+    )
+    mask = th.zeros(*x.shape[1:], device=dist_util.DistUtil.dev())
     mask[0, ...] = 1.0
 
     def replacement(x0, x1):
@@ -799,9 +803,9 @@ def iterative_inpainting(
     # convert the image to a numpy array
     img_np = np.array(img)
     img_np = img_np.transpose(2, 0, 1)
-    img_th = th.from_numpy(img_np).to(dist_util.dev())
+    img_th = th.from_numpy(img_np).to(dist_util.DistUtil.dev())
 
-    mask = th.zeros(*x.shape, device=dist_util.dev())
+    mask = th.zeros(*x.shape, device=dist_util.DistUtil.dev())
     mask = mask.reshape(-1, 7, 3, image_size, image_size)
 
     mask[::2, :, img_th > 0.5] = 1.0
@@ -853,7 +857,11 @@ def iterative_superres(
             matrix = -matrix
         return matrix
 
-    Q = th.from_numpy(obtain_orthogonal_matrix()).to(dist_util.dev()).to(th.float32)
+    Q = (
+        th.from_numpy(obtain_orthogonal_matrix())
+        .to(dist_util.DistUtil.dev())
+        .to(th.float32)
+    )
 
     image_size = x.shape[-1]
 

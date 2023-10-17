@@ -44,7 +44,7 @@ class DeterministicGenerator:
         self.seed = seed
         self.rng_cpu = th.Generator()
         if th.cuda.is_available():
-            self.rng_cuda = th.Generator(dist_util.dev())
+            self.rng_cuda = th.Generator(dist_util.DistUtil.dev())
         self.set_seed(seed)
 
     def get_global_size_and_indices(self, size):
@@ -113,7 +113,9 @@ class DeterministicIndividualGenerator:
         self.seed = seed
         self.rng_cpu = [th.Generator() for _ in range(num_samples)]
         if th.cuda.is_available():
-            self.rng_cuda = [th.Generator(dist_util.dev()) for _ in range(num_samples)]
+            self.rng_cuda = [
+                th.Generator(dist_util.DistUtil.dev()) for _ in range(num_samples)
+            ]
         self.set_seed(seed)
 
     def get_size_and_indices(self, size):

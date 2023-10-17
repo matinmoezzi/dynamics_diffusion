@@ -59,7 +59,7 @@ def main(cfg: DictConfig):
     model.load_state_dict(
         dist_util.load_state_dict(str(model_path), map_location="cpu")
     )
-    model.to(dist_util.dev())
+    model.to(dist_util.DistUtil.dev())
     model.eval()
 
     is_sde = False
@@ -98,7 +98,7 @@ def main(cfg: DictConfig):
             model,
             (cfg.batch_size, state_dim),
             steps=cfg.cm_sampler.steps,
-            device=dist_util.dev(),
+            device=dist_util.DistUtil.dev(),
             clip_denoised=cfg.clip_denoised,
             sampler=cfg.cm_sampler.sampler,
             sigma_min=train_cfg.trainer.diffusion.target.sigma_min,
@@ -125,7 +125,7 @@ def main(cfg: DictConfig):
             inverse_scaler,
             sampling_eps,
             continuous=train_cfg.trainer.continuous,
-            device=dist_util.dev(),
+            device=dist_util.DistUtil.dev(),
         )
         is_sde = True
     else:
@@ -142,11 +142,17 @@ def main(cfg: DictConfig):
     for _ in trange(0, cfg.num_samples, cfg.batch_size):
         model_kwargs = {}
         traj = random_rollout(env, cfg.batch_size)
-        states = th.from_numpy(np.array(traj["states"])).float().to(dist_util.dev())
+        states = (
+            th.from_numpy(np.array(traj["states"])).float().to(dist_util.DistUtil.dev())
+        )
         model_kwargs["state"] = states
         all_states.extend([np.array(traj["states"])])
 
-        actions = th.from_numpy(np.array(traj["actions"])).float().to(dist_util.dev())
+        actions = (
+            th.from_numpy(np.array(traj["actions"]))
+            .float()
+            .to(dist_util.DistUtil.dev())
+        )
         model_kwargs["action"] = actions
         all_actions.extend([np.array(traj["actions"])])
         all_next_states.extend([np.array(traj["next_states"])])

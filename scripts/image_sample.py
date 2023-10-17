@@ -81,7 +81,7 @@ def main():
 
         sampler = hydra_cfg.hydra.runtime.choices.trainer
 
-        snapshot = th.load(model_path, map_location=dist_util.dev())
+        snapshot = th.load(model_path, map_location=dist_util.DistUtil.dev())
         model_dict = snapshot["model_state"]
 
     log_dir = abs_path / f"../image_samples/{sampler}/{datetime.now():%Y%m%d-%H%M%S}"
@@ -92,7 +92,7 @@ def main():
 
     model = hydra.utils.instantiate(model_cfg)
     model.load_state_dict(model_dict)
-    model = model.to(dist_util.dev())
+    model = model.to(dist_util.DistUtil.dev())
     model.eval()
 
     model_kwargs = {}
@@ -105,7 +105,10 @@ def main():
         )
         if model_cfg.class_cond:
             classes = th.randint(
-                low=0, high=NUM_CLASSES, size=(cfg.batch_size,), device=dist_util.dev()
+                low=0,
+                high=NUM_CLASSES,
+                size=(cfg.batch_size,),
+                device=dist_util.DistUtil.dev(),
             )
             model_kwargs["y"] = classes
         sample_fn_wrapper = partial(
@@ -139,7 +142,10 @@ def main():
         )
         if model_cfg.class_cond:
             classes = th.randint(
-                low=0, high=NUM_CLASSES, size=(cfg.batch_size,), device=dist_util.dev()
+                low=0,
+                high=NUM_CLASSES,
+                size=(cfg.batch_size,),
+                device=dist_util.DistUtil.dev(),
             )
             model_kwargs["y"] = classes
         sample_fn_wrapper = partial(
@@ -153,7 +159,7 @@ def main():
                 model_cfg.image_size,
             ),
             steps=cfg.cm_sampler.steps,
-            device=dist_util.dev(),
+            device=dist_util.DistUtil.dev(),
             clip_denoised=cfg.cm_sampler.clip_denoised,
             sampler=cfg.cm_sampler.sampler,
             sigma_min=diffusion_cfg.sigma_min,
@@ -186,7 +192,7 @@ def main():
             inverse_scaler,
             sampling_eps,
             continuous=train_cfg.trainer.continuous,
-            device=dist_util.dev(),
+            device=dist_util.DistUtil.dev(),
         )
     else:
         raise NotImplementedError(f"{sampler} not supported.")
