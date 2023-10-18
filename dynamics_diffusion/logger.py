@@ -187,11 +187,11 @@ def make_output_format(format, ev_dir, log_suffix=""):
 # ================================================================
 # API
 # ================================================================
-def log_param(key, param, step=None):
+def log_param(key, param, step=None, log_frequency=None):
     """
     Log a parameter (e.g. a neural network weight)
     """
-    return get_current().log_param(key, param, step)
+    return get_current().log_param(key, param, step, log_frequency)
 
 
 def log_histogram(key, values, step=None):
@@ -217,7 +217,7 @@ def logkv(key, val):
     get_current().logkv(key, val)
 
 
-def logkv_mean(key, val, step=None, n=1, log_frequency=None):
+def logkv_mean(key, val, step=None, n=1, log_frequency=1):
     """
     The same as logkv(), but if called many times, values averaged.
     """
@@ -348,7 +348,7 @@ class Logger(object):
 
     # Logging API, forwarded
     # ----------------------------------------
-    def log_param(self, key, param, step=None):
+    def log_param(self, key, param, step=None, log_frequency=None):
         self.log_histogram(key + "_w", param.weight.data, step)
         if hasattr(param.weight, "grad") and param.weight.grad is not None:
             self.log_histogram(key + "_w_g", param.weight.grad.data, step)
@@ -522,7 +522,7 @@ class SACSVGLogger(Logger):
         log_frequency = log_frequency or self.log_frequency
         return step % log_frequency == 0
 
-    def logkv_mean(self, key, value, step, n=1, log_frequency=None):
+    def logkv_mean(self, key, value, step, n=1, log_frequency=1):
         if not self._should_log(step, log_frequency):
             return
         assert key.startswith("train") or key.startswith("eval")
