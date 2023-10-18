@@ -168,3 +168,4 @@ cifar_test
 
 *.pt
 *.pth
+image_samples/
