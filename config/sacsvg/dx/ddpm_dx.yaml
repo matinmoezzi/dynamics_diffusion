@@ -1,0 +1,21 @@
+defaults:
+  - _self_
+  - /dynamics/model@model: MLP
+  - /dynamics/diffusion@diffusion: gaussian
+_target_: sacsvg.diffusion_dx.DDPMDx
+env_name: ${..env_name}
+obs_dim: ${..obs_dim}
+action_dim: ${..action_dim}
+horizon: ${..agent.horizon}
+device: ${..device}
+detach_xt: true
+clip_grad_norm: 1.0
+opt_name: "Adam"
+lr: 1e-3
+ema_rate: "0.9999"  # comma-separated list of EMA values
+use_fp16: false
+fp16_scale_growth: 1e-3
+
+use_ddim: false
+clip_denoised: false
+schedule_sampler: "loss-second-moment"

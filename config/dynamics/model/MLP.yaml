@@ -1,2 +1,4 @@
-name: MLP
+_target_: dynamics_diffusion.mlp.MLP
+_partial_: True
 learn_sigma: False
+use_fp16: ${..use_fp16}

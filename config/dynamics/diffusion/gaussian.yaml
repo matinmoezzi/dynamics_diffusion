@@ -4,6 +4,6 @@ steps: 1000
 noise_schedule: "linear"
 timestep_respacing: ""
 use_kl: False
-predict_xstart: False
+predict_xstart: True
 rescale_timesteps: True
 rescale_learned_sigmas: True

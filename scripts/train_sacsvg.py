@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 # Copyright (c) Facebook, Inc. and its affiliates.
 
+from pathlib import Path
 import numpy as np
+from omegaconf import OmegaConf
 import torch
 import copy
 import os
@@ -11,6 +13,9 @@ import time
 import pickle as pkl
 
 from setproctitle import setproctitle
+from tqdm import trange
+
+from dynamics_diffusion import dist_util
 
 setproctitle("sacsvg")
 
@@ -22,20 +27,17 @@ from sacsvg.video import VideoRecorder
 from sacsvg import agent, utils, temp, dx, actor, critic
 from sacsvg.logger import Logger
 from sacsvg.replay_buffer import ReplayBuffer
-
-from IPython.core import ultratb
-
-sys.excepthook = ultratb.FormattedTB(mode="Plain", color_scheme="Neutral", call_pdb=1)
+from hydra.core.hydra_config import HydraConfig
 
 
 class Workspace(object):
     def __init__(self, cfg):
-        self.work_dir = os.getcwd()
-        print(f"workspace: {self.work_dir}")
+        self.work_dir = Path(HydraConfig.get().run.dir, "train").resolve()
+        print(f"Logging to {self.work_dir} ...")
 
         self.cfg = cfg
 
-        self.logger = Logger(
+        self.logger = Logger.configure(
             self.work_dir,
             save_tb=cfg.log_save_tb,
             log_frequency=cfg.log_freq,
@@ -116,7 +118,7 @@ class Workspace(object):
         obs = self.env.reset()
 
         start_time = time.time()
-        while self.step < self.cfg.num_train_steps:
+        for _ in trange(self.step, int(self.cfg.num_train_steps), initial=self.step):
             if self.done:
                 if self.step > 0:
                     self.logger.log(
@@ -242,11 +244,37 @@ class Workspace(object):
             self.replay_buffer.load_data(self.replay_dir)
 
 
+def steps_to_human_readable(step_count) -> str:
+    # Ensure the input is an integer
+    step_count = int(step_count)
+
+    # Convert to human-readable format
+    if step_count < 1000:
+        return str(step_count)
+    elif step_count < 1000000:
+        return f"{step_count/1000:.0f}K"  # for thousands
+    else:
+        return f"{step_count/1000000:.0f}M"  # for millions
+
+
+def get_runtime_choice(key):
+    instance = HydraConfig.get()
+    return instance.runtime.choices[f"{key}@trainer.{key}"]
+
+
+OmegaConf.register_new_resolver("get_runtime_choice", get_runtime_choice, replace=True)
+OmegaConf.register_new_resolver(
+    "human_readable_steps", steps_to_human_readable, replace=True
+)
+
+
 @hydra.main(version_base=None, config_path="../config/sacsvg", config_name="train")
 def main(cfg):
     # this needs to be done for successful pickle
     SCRIPT_DIR = os.path.dirname(os.path.realpath(__file__))
     from train_sacsvg import Workspace as W
+
+    dist_util.DistUtil.setup_dist()
 
     fname = os.getcwd() + "/latest.pkl"
     if os.path.exists(fname):

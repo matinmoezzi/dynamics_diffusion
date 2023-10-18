@@ -17,6 +17,22 @@ GPUS_PER_NODE = 8
 SETUP_RETRY_COUNT = 3
 
 
+def find_free_port():
+    """
+    Finds a free port on the host.
+
+    Returns:
+        int: A free port number.
+    """
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(
+            ("localhost", 0)
+        )  # Bind to port 0, which prompts the OS to assign a free port
+        s.listen(1)  # Start listening for connections on the socket
+        port = s.getsockname()[1]  # Retrieve the port number assigned by the OS
+        return port
+
+
 class DistUtil:
     _instance = None
     device = "cude"
@@ -35,7 +51,7 @@ class DistUtil:
         os.environ["LOCAL_RANK"] = os.environ.get("LOCAL_RANK", "0")
         os.environ["WORLD_SIZE"] = os.environ.get("WORLD_SIZE", "1")
         os.environ["MASTER_ADDR"] = os.environ.get("MASTER_ADDR", "localhost")
-        os.environ["MASTER_PORT"] = os.environ.get("MASTER_PORT", "29500")
+        os.environ["MASTER_PORT"] = os.environ.get("MASTER_PORT", str(find_free_port()))
 
         backend = "gloo" if device == "cpu" else "nccl"
 

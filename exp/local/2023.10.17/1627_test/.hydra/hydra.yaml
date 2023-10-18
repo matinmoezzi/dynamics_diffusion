@@ -140,7 +140,7 @@ hydra:
     - path: ''
       schema: structured
       provider: schema
-    output_dir: /mnt/md126/users/matin/dynamics_diffusion/exp/local/2023.10.17/1527_test
+    output_dir: /mnt/md126/users/matin/dynamics_diffusion/exp/local/2023.10.17/1627_test
     choices:
       env: mbpo_ant
       hydra/env: default

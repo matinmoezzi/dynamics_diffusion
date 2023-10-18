@@ -69,20 +69,17 @@ class TrainLoop:
         self.diffusion = diffusion
         if isinstance(model, th.nn.Module):
             self.model = model
-        elif model.name == "MLP":
-            tmp_data = next(self.dataset)
-            assert (
-                "state" in tmp_data[1] and "action" in tmp_data[1]
-            ), "Dataset must have state and action"
-            self.x_dim = tmp_data[1]["state"].shape[1]
-            self.cond_dim = self.x_dim + tmp_data[1]["action"].shape[1]
-            self.model = MLP(
-                self.x_dim,
-                self.cond_dim,
-                use_fp16=use_fp16,
-                learn_sigma=model.learn_sigma,
-            )
-
+        elif isinstance(model, functools.partial):
+            if model.func == MLP:
+                tmp_data = next(self.dataset)
+                assert (
+                    "state" in tmp_data[1] and "action" in tmp_data[1]
+                ), "Dataset must have state and action"
+                self.x_dim = tmp_data[1]["state"].shape[1]
+                self.cond_dim = self.x_dim + tmp_data[1]["action"].shape[1]
+                self.model = model(x_dim=self.x_dim, cond_dim=self.cond_dim)
+        else:
+            raise ValueError(f"Unknown model {model}")
         self.model = self.model.to(dist_util.DistUtil.dev())
         self.batch_size = batch_size
         self.microbatch = microbatch if microbatch > 0 else batch_size
