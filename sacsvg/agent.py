@@ -5,6 +5,12 @@ import copy
 
 import torch
 import torch.nn.functional as F
+import torch.distributed as dist
+
+from dynamics_diffusion import dist_util
+from torch.nn.parallel.distributed import DistributedDataParallel as DDP
+
+from sacsvg.logger import Logger
 
 from . import utils
 
@@ -80,6 +86,7 @@ class SACSVGAgent(Agent):
         self.device = torch.device(device)
         self.num_train_steps = num_train_steps
         self.det_suffix = det_suffix
+        self.logger = Logger.get_logger()
 
         self.discount = discount
         self.discount_horizon = torch.tensor(
@@ -140,6 +147,75 @@ class SACSVGAgent(Agent):
 
         if full_target_mve:
             assert ~critic_target_mve
+
+        if dist_util.DistUtil.device == "cpu":
+            self.use_ddp = True
+            self.critic = DDP(
+                self.critic,
+                broadcast_buffers=False,
+                bucket_cap_mb=128,
+                find_unused_parameters=False,
+            )
+            self.actor = DDP(
+                self.actor,
+                broadcast_buffers=False,
+                bucket_cap_mb=128,
+                find_unused_parameters=False,
+            )
+            self.rew = DDP(
+                self.rew,
+                broadcast_buffers=False,
+                bucket_cap_mb=128,
+                find_unused_parameters=False,
+            )
+            self.done = DDP(
+                self.done,
+                broadcast_buffers=False,
+                bucket_cap_mb=128,
+                find_unused_parameters=False,
+            )
+
+        elif torch.cuda.is_available():
+            self.use_ddp = True
+            self.critic = DDP(
+                self.critic,
+                device_ids=[dist_util.DistUtil.dev()],
+                output_device=dist_util.DistUtil.dev(),
+                broadcast_buffers=False,
+                bucket_cap_mb=128,
+                find_unused_parameters=False,
+            )
+            self.actor = DDP(
+                self.actor,
+                device_ids=[dist_util.DistUtil.dev()],
+                output_device=dist_util.DistUtil.dev(),
+                broadcast_buffers=False,
+                bucket_cap_mb=128,
+                find_unused_parameters=False,
+            )
+            self.rew = DDP(
+                self.rew,
+                device_ids=[dist_util.DistUtil.dev()],
+                output_device=dist_util.DistUtil.dev(),
+                broadcast_buffers=False,
+                bucket_cap_mb=128,
+                find_unused_parameters=False,
+            )
+            self.done = DDP(
+                self.done,
+                device_ids=[dist_util.DistUtil.dev()],
+                output_device=dist_util.DistUtil.dev(),
+                broadcast_buffers=False,
+                bucket_cap_mb=128,
+                find_unused_parameters=False,
+            )
+        else:
+            if dist.get_world_size() > 1:
+                self.logger.log(
+                    "Distributed training requires CUDA. "
+                    "Gradients will not be synchronized properly!"
+                )
+            self.use_ddp = False
 
         self.train()
         self.last_step = 0
@@ -252,8 +328,10 @@ class SACSVGAgent(Agent):
         self.actor_opt.zero_grad()
         actor_loss.backward()
         self.actor_opt.step()
-
-        self.actor.log(logger, step)
+        if hasattr(self.actor, "module"):
+            self.actor.module.log(logger, step)
+        else:
+            self.actor.log(logger, step)
         self.temp.update(first_log_p, logger, step)
 
         logger.log("train_alpha/value", self.temp.alpha, step)
@@ -303,7 +381,10 @@ class SACSVGAgent(Agent):
         logger.log("train_critic/Q_loss", Q_loss, step)
         self.critic_opt.step()
 
-        self.critic.log(logger, step)
+        if hasattr(self.critic, "module"):
+            self.critic.module.log(logger, step)
+        else:
+            self.critic.log(logger, step)
 
     def update_critic_mve(
         self, first_xs, first_us, first_rs, next_xs, first_not_dones, logger, step
@@ -394,7 +475,10 @@ class SACSVGAgent(Agent):
         logger.log("train_critic/Q_loss", Q_loss, step)
         self.critic_opt.step()
 
-        self.critic.log(logger, step)
+        if hasattr(self.critic, "module"):
+            self.critic.module.log(logger, step)
+        else:
+            self.critic.log(logger, step)
 
     def update(self, replay_buffer, logger, step):
         self.last_step = step

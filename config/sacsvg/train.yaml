@@ -1,7 +1,7 @@
 defaults:
   - _self_
   - env: mbpo_ant
-  - dx: scoresde_dx
+  - dx: seqdx
   # - hydra/sweeper: svg
   # - hydra/launcher: submitit_slurm
 

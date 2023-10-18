@@ -139,7 +139,7 @@ class DiffusionDx(nn.Module):
             self.model = self.ddp_model
         else:
             if dist.get_world_size() > 1:
-                self.logger.warn(
+                self.logger.log(
                     "Distributed training requires CUDA. "
                     "Gradients will not be synchronized properly!"
                 )
