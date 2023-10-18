@@ -50,12 +50,16 @@ class HumanOutputFormat(KVWriter, SeqWriter):
     def writekvs(self, kvs):
         # Create strings for printing
         key2str = {}
+        eval_key2str = {}
         for key, val in sorted(kvs.items()):
             if hasattr(val, "__float__"):
-                valstr = "%-8.3g" % val
+                valstr = "%-8.4g" % val
             else:
                 valstr = str(val)
-            key2str[self._truncate(key)] = self._truncate(valstr)
+            if key.startswith("eval/"):
+                eval_key2str[self._truncate(key)] = self._truncate(valstr)
+            else:
+                key2str[self._truncate(key)] = self._truncate(valstr)
 
         # Find max widths
         if len(key2str) == 0:
@@ -65,21 +69,44 @@ class HumanOutputFormat(KVWriter, SeqWriter):
             keywidth = max(map(len, key2str.keys()))
             valwidth = max(map(len, key2str.values()))
 
+        if eval_key2str:
+            keywidth = max(keywidth, max(map(len, eval_key2str.keys())))
+            valwidth = max(valwidth, max(map(len, eval_key2str.values())))
+
         # Write out the data
         dash_len = keywidth + valwidth + len(self.suffix)
-        suffix_dashes = "-" * dash_len
-        dashes = (
+        dashes = "-" * (dash_len - 1)
+        suffix_dashes = (
             "-" * ((dash_len - len(self.suffix)) // 2)
             + self.suffix
             + "-" * ((dash_len - len(self.suffix)) // 2)
         )
-        lines = [dashes]
+        lines = [suffix_dashes]
         for key, val in sorted(key2str.items(), key=lambda kv: kv[0].lower()):
             lines.append(
                 "| %s%s | %s%s |"
                 % (key, " " * (keywidth - len(key)), val, " " * (valwidth - len(val)))
             )
-        lines.append(suffix_dashes)
+        if eval_key2str:
+            eval_dashes = (
+                "|"
+                + "*" * ((dash_len - len("EVAL")) // 2 - 1)
+                + "EVAL"
+                + "*" * ((dash_len - len("EVAL")) // 2 - 1)
+                + "|"
+            )
+            lines.append(eval_dashes)
+            for key, val in eval_key2str.items():
+                lines.append(
+                    "| %s%s | %s%s |"
+                    % (
+                        key,
+                        " " * (keywidth - len(key)),
+                        val,
+                        " " * (valwidth - len(val)),
+                    )
+                )
+        lines.append(dashes)
         self.file.write("\n".join(lines) + "\n")
 
         # Flush the output to the file
@@ -201,11 +228,11 @@ def log_histogram(key, values, step=None):
     return get_current().log_histogram(key, values, step)
 
 
-def dump(step=None, ty=None):
+def dump(step=None):
     """
     Write all of the diagnostics from the current iteration
     """
-    return get_current().dump(step, ty)
+    return get_current().dump(step)
 
 
 def logkv(key, val):
@@ -370,25 +397,12 @@ class Logger(object):
         self.name2val[key] = oldval * cnt / (cnt + 1) + val / (cnt + 1)
         self.name2cnt[key] = cnt + 1
 
-    def dump(self, step=None, ty=None):
-        step = (
-            step
-            or self.name2val["train/step"]
-            or self.name2val["eval/step"]
-            or self.name2val["step"]
-        )
-
+    def dump(self, step=None):
+        step = step or self.name2val["step"]
         if step is None:
             raise ValueError("Must specify step")
-        if ty is None:
-            self.logkv("train/step", step)
-            self.logkv("eval/step", step)
-        elif ty == "eval":
-            self.logkv("eval/step", step)
-        elif ty == "train":
-            self.logkv("train/step", step)
-        else:
-            raise ValueError(f"Unknown type {ty}")
+        if step != self.name2val["step"]:
+            self.logkv("step", step)
         self.dumpkvs()
 
     def dumpkvs(self):
@@ -549,14 +563,6 @@ class SACSVGLogger(Logger):
             if hasattr(param.bias, "grad") and param.bias.grad is not None:
                 self.log_histogram(key + "_b_g", param.bias.grad.data, step)
 
-    def dump(self, step, ty=None):
-        if ty is None:
-            self.logkv("train/step", step)
-            self.logkv("eval/step", step)
-        elif ty == "eval":
-            self.logkv("eval/step", step)
-        elif ty == "train":
-            self.logkv("train/step", step)
-        else:
-            raise ValueError(f"Unknown type {ty}")
+    def dump(self, step):
+        self.logkv("step", step)
         self.dumpkvs()

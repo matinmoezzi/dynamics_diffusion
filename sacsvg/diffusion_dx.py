@@ -180,9 +180,6 @@ class DDPMDx(DiffusionDx):
         if self.freeze_dims is not None:
             obs_frozen = init_x[:, self.freeze_dims]
 
-        if self.rec_num_layers > 0:
-            h = self.init_hidden_state(init_x)
-
         pred_xs = []
         us = []
         log_p_us = []
