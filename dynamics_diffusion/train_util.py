@@ -170,7 +170,7 @@ class TrainLoop:
             self.snapshot = th.load(
                 self.resume_checkpoint, map_location=dist_util.DistUtil.dev()
             )
-            self.step = self.resume_step = self.snapshot["step"]
+            self.resume_step = self.snapshot["step"]
             self.model.load_state_dict(self.snapshot["model_state"])
             self.opt.load_state_dict(self.snapshot["opt_state"])
             for rate, ema in zip(self.ema_rate, self.ema):
@@ -186,9 +186,6 @@ class TrainLoop:
         return None
 
     def run_loop(self):
-        assert (
-            self.total_training_steps > self.step
-        ), "total_training_steps must be greater than step"
         for _ in trange(
             self.step,
             self.total_training_steps,
@@ -455,11 +452,8 @@ class CMTrainLoop(TrainLoop):
 
     def run_loop(self):
         saved = False
-        assert (
-            self.total_training_steps > self.resume_step
-        ), "total_training_steps must be greater than resume_step"
         for _ in trange(
-            self.global_step,
+            self.step,
             self.total_training_steps,
             initial=self.step,
             total=self.total_training_steps,
