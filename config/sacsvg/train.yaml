@@ -5,6 +5,12 @@ defaults:
   # - hydra/sweeper: svg
   # - hydra/launcher: submitit_slurm
 
+format_strs:
+  - log
+  - stdout
+  - csv
+  - tensorboard
+
 experiment: test
 
 sweep:
@@ -27,7 +33,6 @@ device: cuda
 action_repeat: 1
 
 log_freq: 10000
-log_save_tb: true
 
 save_video: false
 delete_replay_at_end: true

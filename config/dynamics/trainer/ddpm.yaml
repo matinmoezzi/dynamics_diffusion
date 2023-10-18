@@ -5,7 +5,7 @@ defaults:
   - /dataset: maze2d-umaze 
 _target_: dynamics_diffusion.train_util.TrainLoop
 total_training_steps: 1000000
-schedule_sampler: "loss-second-moment"
+schedule_sampler: "uniform" 
 lr: 1e-4
 weight_decay: 0.0
 lr_anneal_steps: 0
@@ -14,7 +14,7 @@ microbatch: -1  # -1 disables microbatches
 ema_rate: "0.9999"  # comma-separated list of EMA values
 log_interval: 500
 save_interval: 5000
-resume_checkpoint: "/home/matin/data2/dynamics_diffusion/logs/ddpm/maze2d-umaze/gaussian/MLP/cpu32_50K_20231017-115645"
+resume_checkpoint: ""
 opt_name: "AdamW"
 use_fp16: False
 fp16_scale_growth: 1e-3

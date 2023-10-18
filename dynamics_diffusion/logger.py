@@ -13,6 +13,7 @@ from collections import defaultdict
 from contextlib import contextmanager
 import torch.distributed as dist
 from torch.utils.tensorboard import SummaryWriter
+import torch
 
 
 DEBUG = 10
@@ -157,6 +158,10 @@ class TensorBoardOutputFormat(KVWriter):
         self.writer.flush()
         self.step += 1
 
+    def log_histogram(self, key, values, step=None):
+        step = step or self.step
+        self.writer.add_histogram(key, values, step)
+
     def close(self):
         if self.writer:
             self.writer.close()
@@ -182,6 +187,25 @@ def make_output_format(format, ev_dir, log_suffix=""):
 # ================================================================
 # API
 # ================================================================
+def log_param(key, param, step=None):
+    """
+    Log a parameter (e.g. a neural network weight)
+    """
+    return get_current().log_param(key, param, step)
+
+
+def log_histogram(key, values, step=None):
+    """
+    Log a histogram of values.
+    """
+    return get_current().log_histogram(key, values, step)
+
+
+def dump(step=None, ty=None):
+    """
+    Write all of the diagnostics from the current iteration
+    """
+    return get_current().dump(step, ty)
 
 
 def logkv(key, val):
@@ -193,11 +217,15 @@ def logkv(key, val):
     get_current().logkv(key, val)
 
 
-def logkv_mean(key, val):
+def logkv_mean(key, val, step=None, n=1, log_frequency=None):
     """
     The same as logkv(), but if called many times, values averaged.
     """
-    get_current().logkv_mean(key, val)
+    current = get_current()
+    if isinstance(current, SACSVGLogger):
+        current.logkv_mean(key, val, step, n, log_frequency)
+    elif isinstance(current, Logger):
+        current.logkv_mean(key, val)
 
 
 def logkvs(d):
@@ -298,10 +326,11 @@ def profile(n):
 
 
 def get_current():
-    if Logger.CURRENT is None:
+    logger = Logger.CURRENT or SACSVGLogger.CURRENT
+    if logger is None:
         _configure_default_logger()
-
-    return Logger.CURRENT
+        logger = Logger.CURRENT
+    return logger
 
 
 class Logger(object):
@@ -319,6 +348,20 @@ class Logger(object):
 
     # Logging API, forwarded
     # ----------------------------------------
+    def log_param(self, key, param, step=None):
+        self.log_histogram(key + "_w", param.weight.data, step)
+        if hasattr(param.weight, "grad") and param.weight.grad is not None:
+            self.log_histogram(key + "_w_g", param.weight.grad.data, step)
+        if hasattr(param, "bias") and hasattr(param.bias, "data"):
+            self.log_histogram(key + "_b", param.bias.data, step)
+            if hasattr(param.bias, "grad") and param.bias.grad is not None:
+                self.log_histogram(key + "_b_g", param.bias.grad.data, step)
+
+    def log_historgram(self, key, values, step=None):
+        for fmt in self.output_formats:
+            if isinstance(fmt, TensorBoardOutputFormat):
+                fmt.log_histogram(key, values, step)
+
     def logkv(self, key, val):
         self.name2val[key] = val
 
@@ -326,6 +369,27 @@ class Logger(object):
         oldval, cnt = self.name2val[key], self.name2cnt[key]
         self.name2val[key] = oldval * cnt / (cnt + 1) + val / (cnt + 1)
         self.name2cnt[key] = cnt + 1
+
+    def dump(self, step=None, ty=None):
+        step = (
+            step
+            or self.name2val["train/step"]
+            or self.name2val["eval/step"]
+            or self.name2val["step"]
+        )
+
+        if step is None:
+            raise ValueError("Must specify step")
+        if ty is None:
+            self.logkv("train/step", step)
+            self.logkv("eval/step", step)
+        elif ty == "eval":
+            self.logkv("eval/step", step)
+        elif ty == "train":
+            self.logkv("train/step", step)
+        else:
+            raise ValueError(f"Unknown type {ty}")
+        self.dumpkvs()
 
     def dumpkvs(self):
         d = self.name2val
@@ -409,3 +473,90 @@ def scoped_configure(dir=None, format_strs=None, comm=None):
     finally:
         Logger.CURRENT.close()
         Logger.CURRENT = prevlogger
+
+
+class SACSVGLogger(Logger):
+    _instance = None
+
+    def __init__(self, dir, output_formats, log_frequency, comm=None):
+        super().__init__(dir, output_formats, comm)
+        self.log_frequency = log_frequency
+
+    @classmethod
+    def get_logger(cls):
+        assert cls._instance is not None, "logger not configured"
+        return cls._instance
+
+    @classmethod
+    def configure(
+        cls,
+        dir=None,
+        format_strs=["stdout", "log"],
+        log_frequency=10000,
+        log_suffix="",
+    ):
+        if dir is None:
+            dir = os.getenv("LOGDIR")
+        if dir is None:
+            dir = osp.join(
+                Path().resolve(),
+                "log",
+                datetime.datetime.now().strftime("%Y-%m-%d-%H-%M-%S-%f"),
+            )
+        assert isinstance(dir, str)
+        dir = os.path.expanduser(dir)
+        os.makedirs(os.path.expanduser(dir), exist_ok=True)
+
+        format_strs = filter(None, format_strs)
+        output_formats = [make_output_format(f, dir, log_suffix) for f in format_strs]
+
+        if cls._instance is None:
+            cls._instance = SACSVGLogger.CURRENT = SACSVGLogger(
+                dir, output_formats, log_frequency
+            )
+        if output_formats:
+            log("Logging to %s" % dir)
+        return cls._instance
+
+    def _should_log(self, step, log_frequency):
+        log_frequency = log_frequency or self.log_frequency
+        return step % log_frequency == 0
+
+    def logkv_mean(self, key, value, step, n=1, log_frequency=None):
+        if not self._should_log(step, log_frequency):
+            return
+        assert key.startswith("train") or key.startswith("eval")
+        if type(value) == torch.Tensor:
+            value = value.item()
+        super().logkv_mean(key, value)
+
+    def log_histogram(self, key, values, step, log_frequency=None):
+        if not self._should_log(step, log_frequency):
+            return
+        assert key.startswith("train") or key.startswith("eval")
+        for fmt in self.output_formats:
+            if isinstance(fmt, TensorBoardOutputFormat):
+                fmt.log_histogram(key, values, step)
+
+    def log_param(self, key, param, step, log_frequency=None):
+        if not self._should_log(step, log_frequency):
+            return
+        self.log_histogram(key + "_w", param.weight.data, step)
+        if hasattr(param.weight, "grad") and param.weight.grad is not None:
+            self.log_histogram(key + "_w_g", param.weight.grad.data, step)
+        if hasattr(param, "bias") and hasattr(param.bias, "data"):
+            self.log_histogram(key + "_b", param.bias.data, step)
+            if hasattr(param.bias, "grad") and param.bias.grad is not None:
+                self.log_histogram(key + "_b_g", param.bias.grad.data, step)
+
+    def dump(self, step, ty=None):
+        if ty is None:
+            self.logkv("train/step", step)
+            self.logkv("eval/step", step)
+        elif ty == "eval":
+            self.logkv("eval/step", step)
+        elif ty == "train":
+            self.logkv("train/step", step)
+        else:
+            raise ValueError(f"Unknown type {ty}")
+        self.dumpkvs()

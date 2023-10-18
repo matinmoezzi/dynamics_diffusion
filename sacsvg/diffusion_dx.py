@@ -5,7 +5,7 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 from torch.optim import Adam, AdamW, SGD, RMSprop, RAdam
-from dynamics_diffusion import dist_util, sde_sampling
+from dynamics_diffusion import dist_util, logger, sde_sampling
 import torch.distributed as dist
 from torch.nn.parallel.distributed import DistributedDataParallel as DDP
 from dynamics_diffusion.gaussian_diffusion import ModelMeanType
@@ -19,7 +19,6 @@ from dynamics_diffusion.resample import (
 from dynamics_diffusion.sde import VESDE, VPSDE, subVPSDE
 from dynamics_diffusion.sde_models.ema import ExponentialMovingAverage
 from dynamics_diffusion.train_util import _expand_tensor_shape
-from sacsvg.logger import Logger
 
 
 def get_opt(optimizer_name, model_params, lr=0.001):
@@ -83,7 +82,6 @@ class DiffusionDx(nn.Module):
         self.opt_name = opt_name
         self.diffusion = diffusion
         self.use_fp16 = use_fp16
-        self.logger = Logger.get_logger()
 
         if isinstance(model, torch.nn.Module):
             self.model = model
@@ -139,7 +137,7 @@ class DiffusionDx(nn.Module):
             self.model = self.ddp_model
         else:
             if dist.get_world_size() > 1:
-                self.logger.log(
+                logger.warn(
                     "Distributed training requires CUDA. "
                     "Gradients will not be synchronized properly!"
                 )
@@ -287,7 +285,7 @@ class DDPMDx(DiffusionDx):
 
         return pred_xs
 
-    def update_step(self, obs, action, reward, logger, step):
+    def update_step(self, obs, action, reward, step):
         assert obs.dim() == 3
         T, batch_size, _ = obs.shape
 
@@ -363,8 +361,8 @@ class DDPMDx(DiffusionDx):
         step_obs_loss = torch.stack(obs_losses).mean().item()
         step_diffusion_loss = torch.stack(diffusion_losses).mean().item()
 
-        logger.log("train_model/obs_loss", step_obs_loss, step)
-        logger.log("train_diffusion/loss", step_diffusion_loss, step)
+        logger.logkv_mean("train_model/obs_loss", step_obs_loss, step)
+        logger.logkv_mean("train_diffusion/loss", step_diffusion_loss, step)
 
         return (
             torch.stack(diffusion_losses).mean().item(),
@@ -507,7 +505,7 @@ class ScoreSDEDx(DiffusionDx):
 
         return pred_xs
 
-    def update_step(self, obs, action, reward, logger, step):
+    def update_step(self, obs, action, reward, step):
         assert obs.dim() == 3
         T, batch_size, _ = obs.shape
 
@@ -603,8 +601,8 @@ class ScoreSDEDx(DiffusionDx):
         step_obs_loss = torch.stack(obs_losses).mean().item()
         step_diffusion_loss = torch.stack(diffusion_losses).mean().item()
 
-        logger.log("train_model/obs_loss", step_obs_loss, step)
-        logger.log("train_diffusion/loss", step_diffusion_loss, step)
+        logger.logkv_mean("train_model/obs_loss", step_obs_loss, step)
+        logger.logkv_mean("train_diffusion/loss", step_diffusion_loss, step)
 
         return (
             torch.stack(diffusion_losses).mean().item(),

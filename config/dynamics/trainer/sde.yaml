@@ -9,7 +9,7 @@ continuous: True
 likelihood_weighting: False
 
 total_training_steps: 1e6
-batch_size: 16
+batch_size: 1
 microbatch: -1  # -1 disables microbatches
 
 opt_name: "Adam"
@@ -24,6 +24,6 @@ grad_clip: -1
 ema_rate: "0.9999"  # comma-separated list of EMA values
 log_interval: 1000
 save_interval: 10000
-resume_checkpoint: "/home/matin/data2/dynamics_diffusion/logs/sde/maze2d-umaze/VESDEcont/MLP/20231017-105210"
+resume_checkpoint: ""
 use_fp16: False # SDE does not support fp16
 fp16_scale_growth: 1e-3

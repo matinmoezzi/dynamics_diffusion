@@ -7,10 +7,8 @@ import torch
 import torch.nn.functional as F
 import torch.distributed as dist
 
-from dynamics_diffusion import dist_util
+from dynamics_diffusion import dist_util, logger
 from torch.nn.parallel.distributed import DistributedDataParallel as DDP
-
-from sacsvg.logger import Logger
 
 from . import utils
 
@@ -25,7 +23,7 @@ class Agent(object):
         """Sets the agent in either training or evaluation mode."""
 
     @abc.abstractmethod
-    def update(self, replay_buffer, logger, step):
+    def update(self, replay_buffer, step):
         """Main function of the agent that performs learning."""
 
     @abc.abstractmethod
@@ -86,7 +84,6 @@ class SACSVGAgent(Agent):
         self.device = torch.device(device)
         self.num_train_steps = num_train_steps
         self.det_suffix = det_suffix
-        self.logger = Logger.get_logger()
 
         self.discount = discount
         self.discount_horizon = torch.tensor(
@@ -211,7 +208,7 @@ class SACSVGAgent(Agent):
             )
         else:
             if dist.get_world_size() > 1:
-                self.logger.log(
+                logger.warn(
                     "Distributed training requires CUDA. "
                     "Gradients will not be synchronized properly!"
                 )
@@ -291,7 +288,7 @@ class SACSVGAgent(Agent):
         total_log_p_us = log_p_us.sum(dim=0).squeeze()
         return total_rewards, first_log_p, total_log_p_us
 
-    def update_actor_and_alpha(self, xs, logger, step):
+    def update_actor_and_alpha(self, xs, step):
         assert xs.ndimension() == 2
         n_batch, _ = xs.size()
 
@@ -322,21 +319,21 @@ class SACSVGAgent(Agent):
             assert total_log_p_us.size() == rewards.size()
             actor_loss = -(rewards / self.horizon).mean()
 
-        logger.log("train_actor/loss", actor_loss, step)
-        logger.log("train_actor/entropy", -first_log_p.mean(), step)
+        logger.logkv_mean("train_actor/loss", actor_loss, step)
+        logger.logkv_mean("train_actor/entropy", -first_log_p.mean(), step)
 
         self.actor_opt.zero_grad()
         actor_loss.backward()
         self.actor_opt.step()
         if hasattr(self.actor, "module"):
-            self.actor.module.log(logger, step)
+            self.actor.module.log(step)
         else:
-            self.actor.log(logger, step)
-        self.temp.update(first_log_p, logger, step)
+            self.actor.log(step)
+        self.temp.update(first_log_p, step)
 
-        logger.log("train_alpha/value", self.temp.alpha, step)
+        logger.logkv_mean("train_alpha/value", self.temp.alpha, step)
 
-    def update_critic(self, xs, xps, us, rs, not_done, logger, step):
+    def update_critic(self, xs, xps, us, rs, not_done, step):
         assert xs.ndimension() == 2
         n_batch, _ = xs.size()
         rs = rs.squeeze()
@@ -372,22 +369,22 @@ class SACSVGAgent(Agent):
         assert current_Q2.size() == target_Q.size()
         Q_loss = F.mse_loss(current_Q1, target_Q) + F.mse_loss(current_Q2, target_Q)
 
-        logger.log("train_critic/Q_loss", Q_loss, step)
+        logger.logkv_mean("train_critic/Q_loss", Q_loss, step)
         current_Q = torch.min(current_Q1, current_Q2)
-        logger.log("train_critic/value", current_Q.mean(), step)
+        logger.logkv_mean("train_critic/value", current_Q.mean(), step)
 
         self.critic_opt.zero_grad()
         Q_loss.backward()
-        logger.log("train_critic/Q_loss", Q_loss, step)
+        logger.logkv_mean("train_critic/Q_loss", Q_loss, step)
         self.critic_opt.step()
 
         if hasattr(self.critic, "module"):
-            self.critic.module.log(logger, step)
+            self.critic.module.log(step)
         else:
-            self.critic.log(logger, step)
+            self.critic.log(step)
 
     def update_critic_mve(
-        self, first_xs, first_us, first_rs, next_xs, first_not_dones, logger, step
+        self, first_xs, first_us, first_rs, next_xs, first_not_dones, step
     ):
         """MVE critic loss from Feinberg et al (2015)"""
         assert first_xs.dim() == 2
@@ -466,21 +463,21 @@ class SACSVGAgent(Agent):
         q2_loss = (not_dones[:-1, 0] * (q2 - critic_targets).pow(2)).mean()
         Q_loss = q1_loss + q2_loss
 
-        logger.log("train_critic/Q_loss", Q_loss, step)
+        logger.logkv_mean("train_critic/Q_loss", Q_loss, step)
         current_Q = torch.min(q1, q2)
-        logger.log("train_critic/value", current_Q.mean(), step)
+        logger.logkv_mean("train_critic/value", current_Q.mean(), step)
 
         self.critic_opt.zero_grad()
         Q_loss.backward()
-        logger.log("train_critic/Q_loss", Q_loss, step)
+        logger.logkv_mean("train_critic/Q_loss", Q_loss, step)
         self.critic_opt.step()
 
         if hasattr(self.critic, "module"):
-            self.critic.module.log(logger, step)
+            self.critic.module.log(step)
         else:
-            self.critic.log(logger, step)
+            self.critic.log(step)
 
-    def update(self, replay_buffer, logger, step):
+    def update(self, replay_buffer, step):
         self.last_step = step
         if step % self.update_freq != 0:
             return
@@ -495,7 +492,7 @@ class SACSVGAgent(Agent):
                     self.seq_batch_size, self.seq_train_length
                 )
                 assert obses.ndimension() == 3
-                dx_loss = self.dx.update_step(obses, actions, rewards, logger, step)
+                dx_loss = self.dx.update_step(obses, actions, rewards, step)
                 if self.actor_dx_threshold is not None:
                     if self.rolling_dx_loss is None:
                         self.rolling_dx_loss = dx_loss
@@ -519,27 +516,27 @@ class SACSVGAgent(Agent):
             if self.critic is not None:
                 if self.full_target_mve:
                     self.update_critic_mve(
-                        obs, action, reward, next_obs, not_done_no_max, logger, step
+                        obs, action, reward, next_obs, not_done_no_max, step
                     )
                 else:
                     self.update_critic(
-                        obs, next_obs, action, reward, not_done_no_max, logger, step
+                        obs, next_obs, action, reward, not_done_no_max, step
                     )
 
             if step % self.actor_update_freq == 0:
-                self.update_actor_and_alpha(obs, logger, step)
+                self.update_actor_and_alpha(obs, step)
 
             if self.rew_opt is not None:
-                self.update_rew_step(obs, action, reward, logger, step)
+                self.update_rew_step(obs, action, reward, step)
 
-            self.update_done_step(obs, action, not_done_no_max, logger, step)
+            self.update_done_step(obs, action, not_done_no_max, step)
 
             if self.critic is not None and step % self.critic_target_update_freq == 0:
                 utils.soft_update_params(
                     self.critic, self.critic_target, self.critic_tau
                 )
 
-    def update_rew_step(self, obs, action, reward, logger, step):
+    def update_rew_step(self, obs, action, reward, step):
         assert obs.dim() == 2
         batch_size, _ = obs.shape
 
@@ -552,9 +549,9 @@ class SACSVGAgent(Agent):
         reward_loss.backward()
         self.rew_opt.step()
 
-        logger.log("train_model/reward_loss", reward_loss, step)
+        logger.logkv_mean("train_model/reward_loss", reward_loss, step)
 
-    def update_done_step(self, obs, action, not_done, logger, step):
+    def update_done_step(self, obs, action, not_done, step):
         assert obs.dim() == 2
         batch_size, _ = obs.shape
 
@@ -575,4 +572,4 @@ class SACSVGAgent(Agent):
         done_loss.backward()
         self.done_opt.step()
 
-        logger.log("train_model/done_loss", done_loss, step)
+        logger.logkv_mean("train_model/done_loss", done_loss, step)

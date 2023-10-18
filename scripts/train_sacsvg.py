@@ -16,6 +16,8 @@ from setproctitle import setproctitle
 from tqdm import trange
 
 from dynamics_diffusion import dist_util
+from dynamics_diffusion import logger
+from dynamics_diffusion.logger import SACSVGLogger
 
 setproctitle("sacsvg")
 
@@ -25,7 +27,6 @@ from sacsvg import sweeper
 
 from sacsvg.video import VideoRecorder
 from sacsvg import agent, utils, temp, dx, actor, critic
-from sacsvg.logger import Logger
 from sacsvg.replay_buffer import ReplayBuffer
 from hydra.core.hydra_config import HydraConfig
 
@@ -33,15 +34,15 @@ from hydra.core.hydra_config import HydraConfig
 class Workspace(object):
     def __init__(self, cfg):
         self.work_dir = Path(HydraConfig.get().run.dir, "train").resolve()
-        print(f"Logging to {self.work_dir} ...")
 
         self.cfg = cfg
 
-        self.logger = Logger.configure(
-            self.work_dir,
-            save_tb=cfg.log_save_tb,
+        self.log_suffix = f"[{dist_util.DistUtil.device.upper()}:{dist_util.DistUtil.get_global_rank()}]"
+        SACSVGLogger.configure(
+            str(self.work_dir),
             log_frequency=cfg.log_freq,
-            agent="sac_svg",
+            log_suffix=self.log_suffix,
+            format_strs=cfg.format_strs,
         )
 
         utils.set_seed_everywhere(cfg.seed)
@@ -103,10 +104,10 @@ class Workspace(object):
             episode_rewards.append(episode_reward)
 
             self.video_recorder.save(f"{self.step}.mp4")
-            self.logger.log("eval/episode_reward", episode_reward, self.step)
+            logger.logkv_mean("eval/episode_reward", episode_reward, self.step)
         if self.cfg.fixed_eval:
             self.env.set_seed(None)
-        self.logger.dump(self.step)
+        logger.dump(self.step)
         return np.mean(episode_rewards)
 
     # @profile
@@ -121,20 +122,19 @@ class Workspace(object):
         for _ in trange(self.step, int(self.cfg.num_train_steps), initial=self.step):
             if self.done:
                 if self.step > 0:
-                    self.logger.log(
+                    logger.logkv_mean(
                         "train/episode_reward", self.episode_reward, self.step
                     )
-                    self.logger.log(
+                    logger.logkv_mean(
                         "train/duration", time.time() - start_time, self.step
                     )
-                    self.logger.log("train/episode", self.episode, self.step)
+                    logger.logkv_mean("train/episode", self.episode, self.step)
                     start_time = time.time()
-                    self.logger.dump(
-                        self.step, save=(self.step > self.cfg.num_seed_steps)
-                    )
+                    if self.step > self.cfg.num_seed_steps:
+                        logger.dump(self.step)
 
                 if self.steps_since_eval >= self.cfg.eval_freq:
-                    self.logger.log("eval/episode", self.episode, self.step)
+                    logger.logkv_mean("eval/episode", self.episode, self.step)
                     eval_rew = self.evaluate()
                     self.steps_since_eval = 0
 
@@ -177,7 +177,7 @@ class Workspace(object):
 
             # run training update
             if self.step >= self.cfg.num_seed_steps - 1:
-                self.agent.update(self.replay_buffer, self.logger, self.step)
+                self.agent.update(self.replay_buffer, self.step)
 
             next_obs, reward, self.done, _ = self.env.step(action)
 
@@ -201,7 +201,7 @@ class Workspace(object):
             self.steps_since_save += 1
 
         if self.steps_since_eval > 1:
-            self.logger.log("eval/episode", self.episode, self.step)
+            logger.logkv_mean("eval/episode", self.episode, self.step)
             self.evaluate()
 
         if self.cfg.delete_replay_at_end:
@@ -227,11 +227,11 @@ class Workspace(object):
         self.__dict__ = d
         # override work_dir
         self.work_dir = os.getcwd()
-        self.logger = Logger(
-            self.work_dir,
-            save_tb=self.cfg.log_save_tb,
+        SACSVGLogger(
+            str(self.work_dir),
             log_frequency=self.cfg.log_freq,
-            agent="sac_svg",
+            format_strs=self.cfg.format_strs,
+            log_suffix=self.log_suffix,
         )
         self.env = utils.make_norm_env(self.cfg)
         if "max_episode_steps" in self.cfg and self.cfg.max_episode_steps is not None:
@@ -274,7 +274,7 @@ def main(cfg):
     SCRIPT_DIR = os.path.dirname(os.path.realpath(__file__))
     from train_sacsvg import Workspace as W
 
-    dist_util.DistUtil.setup_dist()
+    dist_util.DistUtil.setup_dist(cfg.device)
 
     fname = os.getcwd() + "/latest.pkl"
     if os.path.exists(fname):
