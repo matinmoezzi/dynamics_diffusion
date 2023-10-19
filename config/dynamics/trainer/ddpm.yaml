@@ -1,6 +1,6 @@
 defaults:
   - _self_
-  - /model: UNet
+  - /model: IUNet
   - /diffusion: gaussian
   - /dataset: cifar10 
 _target_: dynamics_diffusion.train_util.TrainLoop
@@ -12,9 +12,9 @@ lr_anneal_steps: 0
 batch_size: 128
 microbatch: -1  # -1 disables microbatches
 ema_rate: "0.9999"  # comma-separated list of EMA values
-log_interval: 500
+log_interval: 10
 save_interval: 5000
-resume_checkpoint: "/home/uoft/matin/shared/cuda1_1M_20231017-205246"
+resume_checkpoint: ""
 opt_name: "AdamW"
 use_fp16: False
 fp16_scale_growth: 1e-3

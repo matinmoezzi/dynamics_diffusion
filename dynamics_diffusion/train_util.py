@@ -28,12 +28,6 @@ from .nn import update_ema
 from .resample import LossAwareSampler, UniformSampler, create_named_schedule_sampler
 
 
-# For ImageNet experiments, this was a good default value.
-# We found that the lg_loss_scale quickly climbed to
-# 20-21 within the first ~1K steps of training.
-INITIAL_LOG_LOSS_SCALE = 20.0
-
-
 def _expand_tensor_shape(x, shape):
     while len(x.shape) < len(shape):
         x = x[..., None]
