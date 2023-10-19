@@ -1,0 +1,20 @@
+defaults:
+  - _self_
+  - /model: CM_UNet
+  - /diffusion: karras
+  - /dataset: cifar10 
+_target_: dynamics_diffusion.sample_util.CMSampler
+num_samples: 1 
+batch_size: 1
+
+generator: "determ-indiv"
+sampler: "onestep"
+s_churn: 0.0
+s_tmin: 0.0
+s_tmax: .inf
+s_noise: 1.0
+steps: 40
+seed: 42
+ts: ""
+clip_denoised: False
+use_fp16: False

@@ -9,7 +9,7 @@ action_dim: ${..action_dim}
 horizon: ${..agent.horizon}
 device: ${..device}
 detach_xt: true
-clip_grad_norm: 1.0
+clip_grad_norm: null
 opt_name: "AdamW"
 lr: 1e-4
 ema_rate: "0.9999"  # comma-separated list of EMA values

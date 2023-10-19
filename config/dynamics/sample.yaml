@@ -1,0 +1,13 @@
+defaults:
+  - _self_
+  - sampler: ddpm
+# model_dir: "/home/matin/data2/dynamics_diffusion/logs/ddpm/maze2d-umaze/gaussian/MLP/cpu1_1M_20231017-140704/train/checkpoint_1000000.pt"
+
+model_dir: "/home/matin/data2/dynamics_diffusion/cifar10_uncond_50M_500K.pt"
+device: cuda
+
+save: True
+
+hydra:
+  run:
+    dir: ./logs/${hydra:runtime.choices.sampler}/${get_runtime_choice:dataset}/${get_runtime_choice:diffusion}${sde_continuous_solver:${sampler}}/${get_runtime_choice:model}/sample_checkpoint_${human_readable_steps:${extract_step_number:${model_dir}}}_${now:%Y%m%d-%H%M%S}

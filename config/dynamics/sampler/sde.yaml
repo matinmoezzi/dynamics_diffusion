@@ -1,0 +1,19 @@
+defaults:
+  - _self_
+  - /model: MLP
+  - /diffusion: VESDE
+  - /dataset: maze2d-umaze 
+_target_: dynamics_diffusion.sample_util.SDESampler
+num_samples: 1 
+batch_size: 1
+use_fp16: False
+
+sde_sampler:
+  n_steps_each: 1
+  noise_removal: True
+  probability_flow: False
+  snr: 0.16
+  method: 'pc'
+  predictor: 'reverse_diffusion'
+  corrector: 'langevin'
+  continuous: True

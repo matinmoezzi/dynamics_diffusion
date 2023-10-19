@@ -1,0 +1,12 @@
+defaults:
+  - _self_
+  - /model: IUNet
+  - /diffusion: gaussian
+  - /dataset: cifar10 
+_target_: dynamics_diffusion.sample_util.DDPMSampler
+use_fp16: False
+use_ddim: True
+clip_denoised: False
+num_samples: 1 
+batch_size: 1
+
