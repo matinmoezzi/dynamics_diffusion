@@ -10,12 +10,12 @@ horizon: ${..agent.horizon}
 device: ${..device}
 detach_xt: true
 clip_grad_norm: 1.0
-opt_name: "Adam"
-lr: 1e-3
+opt_name: "AdamW"
+lr: 1e-4
 ema_rate: "0.9999"  # comma-separated list of EMA values
 use_fp16: false
 fp16_scale_growth: 1e-3
 
-use_ddim: false
+use_ddim: true
 clip_denoised: false
-schedule_sampler: "loss-second-moment"
+schedule_sampler: "uniform"
