@@ -1,7 +1,7 @@
 defaults:
   - _self_
   - trainer: ddpm
-device: "cuda" # "cuda" or "cpu"
+device: "cpu" # "cuda" or "cpu"
 format_strs:
   - log
   - stdout

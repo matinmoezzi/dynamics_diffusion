@@ -45,6 +45,8 @@ class Workspace(object):
             format_strs=cfg.format_strs,
         )
 
+        logger.lod(f"Configuration:\n{cfg}")
+
         utils.set_seed_everywhere(cfg.seed)
         self.device = torch.device(cfg.device)
         self.env = utils.make_norm_env(cfg)

@@ -68,6 +68,7 @@ def main(cfg: DictConfig):
     logger.configure(
         dir=str(log_dir), format_strs=cfg.format_strs, log_suffix=log_suffix
     )
+    logger.log(f"Configuration:\n{cfg}")
 
     trainer = hydra.utils.instantiate(cfg.trainer)
 

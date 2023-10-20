@@ -1,8 +1,8 @@
 defaults:
   - _self_
-  - /model: UNet
+  - /model: MLP
   - /diffusion: gaussian
-  - /dataset: cifar10 
+  - /dataset: kitchen-mixed 
 _target_: dynamics_diffusion.train_util.TrainLoop
 total_training_steps: 21000 
 schedule_sampler: "uniform" 
@@ -14,7 +14,7 @@ microbatch: -1  # -1 disables microbatches
 ema_rate: "0.9999"  # comma-separated list of EMA values
 log_interval: 10
 save_interval: 5000
-resume_checkpoint: "/home/uoft/matin/shared/cuda24_21K_20231018-162659"
+resume_checkpoint: ""
 opt_name: "AdamW"
 use_fp16: False
 fp16_scale_growth: 1e-3
