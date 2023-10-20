@@ -1,12 +1,12 @@
 defaults:
   - _self_
-  - /model: IUNet
+  - /model: MLP
   - /diffusion: gaussian
-  - /dataset: cifar10 
+  - /dataset: maze2d-umaze 
 _target_: dynamics_diffusion.sample_util.DDPMSampler
 use_fp16: False
-use_ddim: True
+use_ddim: False
 clip_denoised: False
-num_samples: 1 
-batch_size: 1
+num_samples: 24
+batch_size: 4
 

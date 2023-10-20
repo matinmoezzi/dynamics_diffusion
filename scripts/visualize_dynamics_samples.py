@@ -10,38 +10,43 @@ from omegaconf import OmegaConf
 def main():
     parser = argparse.ArgumentParser(prog="visualize_samples")
     parser.add_argument(
-        "-i",
-        "--samples_dir",
+        "-f",
+        "--samples_path",
         action="store",
         type=str,
         required=True,
         help="Samples Path in .npz",
     )
+    parser.add_argument(
+        "-e",
+        "--env",
+        default="maze2d-umaze-v1",
+        required=True,
+        type=str,
+        help="Environment name",
+    )
     args = parser.parse_args()
 
-    assert pathlib.Path(
-        args.samples_dir, ".hydra"
-    ).is_dir(), "Hydra configuration not found."
+    assert args.samples_path.endswith(".npz")
 
-    cfg = OmegaConf.load(pathlib.Path(args.samples_dir, ".hydra", "config.yaml"))
-    train_cfg = OmegaConf.load(pathlib.Path(cfg.model_dir, ".hydra", "config.yaml"))
+    samples = np.load(args.samples_path)
 
-    list_samples = list(pathlib.Path(args.samples_dir).glob("*.npz"))
-    assert list_samples, f"No samples (.npz) found."
+    assert (
+        "states" in samples
+        and "true_next_states" in samples
+        and "sampled_next_states" in samples
+    ), "Invalid samples file."
 
-    samples_path = max(list_samples, key=os.path.getctime)
-
-    samples = np.load(samples_path)
     states = samples["states"]
     true_next_states = samples["true_next_states"]
     sampled_next_states = samples["sampled_next_states"]
 
-    print(f"{len(states)} samples loaded from {samples_path}.")
+    print(f"{len(states)} samples loaded from {args.samples_path}.")
 
     mse = ((sampled_next_states - true_next_states) ** 2).mean(axis=0)
     print(f"MSE loss: {mse}")
 
-    env = gym.make("eval-" + train_cfg.env.name)
+    env = gym.make("eval-" + args.env)
     env.reset()
 
     qpos = np.concatenate((states[0][:2], states[0][:2]))

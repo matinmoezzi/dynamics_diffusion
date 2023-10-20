@@ -114,9 +114,10 @@ def main():
         model_cfg = task_cfg.trainer.model
         diffusion_cfg = task_cfg.trainer.diffusion
         dataset_cfg = task_cfg.trainer.dataset
-        OmegaConf.update(cfg, "sampler.model", model_cfg)
-        OmegaConf.update(cfg, "sampler.diffusion", diffusion_cfg)
-        OmegaConf.update(cfg, "sampler.dataset", dataset_cfg)
+
+        cfg.sampler.model = model_cfg
+        cfg.sampler.diffusion = diffusion_cfg
+        cfg.sampler.dataset = dataset_cfg
 
         task_cfg = copy.deepcopy(cfg)
         OmegaConf.set_struct(task_cfg, False)
