@@ -1,6 +1,6 @@
 # @package _global_
 env_name: mbpo_humanoid
-num_train_steps: 5e6
+num_train_steps: 90000
 eval_freq: 25000
 # replay_buffer_capacity: 1e6
 
