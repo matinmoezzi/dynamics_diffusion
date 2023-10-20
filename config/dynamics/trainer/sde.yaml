@@ -24,6 +24,6 @@ grad_clip: -1
 ema_rate: "0.9999"  # comma-separated list of EMA values
 log_interval: 1000
 save_interval: 50000
-resume_checkpoint: "/home/matin/data2/dynamics_diffusion/logs/sde/maze2d-umaze/VESDEcont/MLP/cpu1_1M_20231018-115606"
+resume_checkpoint: ""
 use_fp16: False # SDE does not support fp16
 fp16_scale_growth: 1e-3
