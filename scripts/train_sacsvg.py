@@ -222,7 +222,7 @@ class Workspace(object):
 
     def __getstate__(self):
         d = copy.copy(self.__dict__)
-        del d["logger"], d["env"]
+        del d["env"]
         return d
 
     def __setstate__(self, d):
