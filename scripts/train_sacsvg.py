@@ -207,7 +207,8 @@ class Workspace(object):
             self.evaluate()
 
         if self.cfg.delete_replay_at_end:
-            shutil.rmtree(self.replay_dir)
+            if os.path.exists(self.replay_dir):
+                shutil.rmtree(self.replay_dir)
 
     def save(self, tag="latest"):
         path = os.path.join(self.work_dir, f"{tag}.pkl")
