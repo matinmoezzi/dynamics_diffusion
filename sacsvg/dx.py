@@ -75,7 +75,7 @@ class SeqNN(nn.Module):
                 assert False
             mods.append(self.rec)
 
-        self.params = utils.get_params(mods)
+        self.params = list(utils.get_params(mods))
 
     def __getstate__(self):
         d = self.__dict__
@@ -304,6 +304,10 @@ class SeqDx(nn.Module):
         return obs_loss.item()
 
     def unroll_policy(self, init_x, policy, sample=True, last_u=True, detach_xt=False):
+        if hasattr(self.model, "module"):
+            return self.model.module.unroll_policy(
+                init_x, policy, sample=sample, last_u=last_u, detach_xt=detach_xt
+            )
         return self.model.unroll_policy(
             init_x, policy, sample=sample, last_u=last_u, detach_xt=detach_xt
         )
