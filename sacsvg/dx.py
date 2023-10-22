@@ -3,19 +3,20 @@
 import torch
 from torch import nn
 import torch.nn.functional as F
+from torch.nn.parallel.distributed import DistributedDataParallel as DDP
+import torch.distributed as dist
 
-from dynamics_diffusion import logger
+from dynamics_diffusion import dist_util, logger
 
 from . import utils
 
 
-class SeqDx(nn.Module):
+class SeqNN(nn.Module):
     def __init__(
         self,
         env_name,
         obs_dim,
         action_dim,
-        action_range,
         horizon,
         device,
         detach_xt,
@@ -27,7 +28,6 @@ class SeqDx(nn.Module):
         rec_type,
         rec_latent_dim,
         rec_num_layers,
-        lr,
     ):
         super().__init__()
 
@@ -75,8 +75,7 @@ class SeqDx(nn.Module):
                 assert False
             mods.append(self.rec)
 
-        params = utils.get_params(mods)
-        self.opt = torch.optim.Adam(params, lr=lr)
+        self.params = utils.get_params(mods)
 
     def __getstate__(self):
         d = self.__dict__
@@ -198,14 +197,95 @@ class SeqDx(nn.Module):
 
         return pred_xs
 
-    def forward(self, x, us):
-        return self.unroll(x, us)
+    def forward(self, x, us, detach_xt=False):
+        return self.unroll(x, us, detach_xt=detach_xt)
+
+
+class SeqDx(nn.Module):
+    def __init__(
+        self,
+        env_name,
+        obs_dim,
+        action_dim,
+        horizon,
+        device,
+        detach_xt,
+        clip_grad_norm,
+        xu_enc_hidden_dim,
+        xu_enc_hidden_depth,
+        x_dec_hidden_dim,
+        x_dec_hidden_depth,
+        rec_type,
+        rec_latent_dim,
+        rec_num_layers,
+        lr,
+    ):
+        super().__init__()
+
+        self.env_name = env_name
+        self.obs_dim = obs_dim
+        self.action_dim = action_dim
+        self.horizon = horizon
+        self.device = device
+        self.detach_xt = detach_xt
+        self.clip_grad_norm = clip_grad_norm
+        self.xu_enc_hidden_dim = xu_enc_hidden_dim
+        self.xu_enc_hidden_depth = xu_enc_hidden_depth
+        self.x_dec_hidden_dim = x_dec_hidden_dim
+        self.x_dec_hidden_depth = x_dec_hidden_depth
+        self.rec_type = rec_type
+        self.rec_latent_dim = rec_latent_dim
+        self.rec_num_layers = rec_num_layers
+        self.lr = lr
+
+        self.model = SeqNN(
+            env_name,
+            obs_dim,
+            action_dim,
+            horizon,
+            device,
+            detach_xt,
+            clip_grad_norm,
+            xu_enc_hidden_dim,
+            xu_enc_hidden_depth,
+            x_dec_hidden_dim,
+            x_dec_hidden_depth,
+            rec_type,
+            rec_latent_dim,
+            rec_num_layers,
+        )
+        self.model = self.model.to(dist_util.DistUtil.dev())
+
+        self.opt = torch.optim.Adam(self.model.params, lr=lr)
+
+        if dist_util.DistUtil.device == "cpu":
+            self.use_ddp = True
+            self.ddp_model = DDP(
+                self.model,
+            )
+            self.model = self.ddp_model
+
+        elif torch.cuda.is_available():
+            self.use_ddp = True
+            self.ddp_model = DDP(
+                self.model,
+                device_ids=[dist_util.DistUtil.dev()],
+            )
+            self.model = self.ddp_model
+        else:
+            if dist.get_world_size() > 1:
+                logger.warn(
+                    "Distributed training requires CUDA. "
+                    "Gradients will not be synchronized properly!"
+                )
+            self.use_ddp = False
+            self.ddp_model = self.model
 
     def update_step(self, obs, action, reward, step):
         assert obs.dim() == 3
         T, batch_size, _ = obs.shape
 
-        pred_obs = self.unroll(obs[0], action[:-1], detach_xt=self.detach_xt)
+        pred_obs = self.model(obs[0], action[:-1], detach_xt=self.detach_xt)
         target_obs = obs[1:]
         assert pred_obs.size() == target_obs.size()
 
@@ -222,3 +302,8 @@ class SeqDx(nn.Module):
         logger.logkv_mean("train_model/obs_loss", obs_loss, step)
 
         return obs_loss.item()
+
+    def unroll_policy(self, init_x, policy, sample=True, last_u=True, detach_xt=False):
+        return self.model.unroll_policy(
+            init_x, policy, sample=sample, last_u=last_u, detach_xt=detach_xt
+        )

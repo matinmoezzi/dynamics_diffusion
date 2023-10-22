@@ -2,7 +2,6 @@ _target_: sacsvg.dx.SeqDx
 env_name: ${..env_name}
 obs_dim: ${..obs_dim}
 action_dim: ${..action_dim}
-action_range: ${..action_range}
 horizon: ${..agent.horizon}
 device: ${..device}
 detach_xt: true

@@ -108,8 +108,6 @@ class TrainLoop:
         self.resume_step = 0
         self.global_batch = self.batch_size * dist.get_world_size()
 
-        self.opt = self._get_optimizer()
-
         self.ema = [
             ExponentialMovingAverage(self.model.parameters(), decay=rate)
             for rate in range(len(self.ema_rate))
@@ -122,6 +120,8 @@ class TrainLoop:
             use_fp16=self.use_fp16,
             fp16_scale_growth=fp16_scale_growth,
         )
+
+        self.opt = self._get_optimizer(self.mp_trainer.master_params)
 
         if dist_util.DistUtil.device == "cpu":
             self.use_ddp = True
@@ -275,10 +275,10 @@ class TrainLoop:
                 th.save(snapshot, f)
         dist.barrier()
 
-    def _get_optimizer(self):
+    def _get_optimizer(self, parameters):
         if self.opt_name == "adam":
             return th.optim.Adam(
-                self.model.parameters(),
+                parameters,
                 lr=self.lr,
                 betas=(self.beta1, self.beta2),
                 eps=self.eps,
@@ -286,7 +286,7 @@ class TrainLoop:
             )
         elif self.opt_name == "adamax":
             return th.optim.Adamax(
-                self.model.parameters(),
+                parameters,
                 lr=self.lr,
                 betas=(self.beta1, self.beta2),
                 eps=self.eps,
@@ -294,7 +294,7 @@ class TrainLoop:
             )
         elif self.opt_name == "adamw":
             return th.optim.AdamW(
-                self.model.parameters(),
+                parameters,
                 lr=self.lr,
                 betas=(self.beta1, self.beta2),
                 eps=self.eps,
@@ -302,7 +302,7 @@ class TrainLoop:
             )
         elif self.opt_name == "rmsprop":
             return th.optim.RMSprop(
-                self.model.parameters(),
+                parameters,
                 lr=self.lr,
                 alpha=self.alpha,
                 eps=self.eps,
@@ -312,7 +312,7 @@ class TrainLoop:
             )
         elif self.opt_name == "sgd":
             return th.optim.SGD(
-                self.model.parameters(),
+                parameters,
                 lr=self.lr,
                 momentum=self.momentum,
                 dampening=self.dampening,

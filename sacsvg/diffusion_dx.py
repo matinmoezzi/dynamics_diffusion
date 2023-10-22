@@ -112,15 +112,10 @@ class DiffusionDx(nn.Module):
         else:
             self.freeze_dims = None
 
-        self.opt = get_opt(self.opt_name, list(self.model.parameters()), lr=lr)
-
         if dist_util.DistUtil.device == "cpu":
             self.use_ddp = True
             self.ddp_model = DDP(
                 self.model,
-                broadcast_buffers=False,
-                bucket_cap_mb=128,
-                find_unused_parameters=False,
             )
             self.model = self.ddp_model
 
@@ -129,10 +124,6 @@ class DiffusionDx(nn.Module):
             self.ddp_model = DDP(
                 self.model,
                 device_ids=[dist_util.DistUtil.dev()],
-                output_device=dist_util.DistUtil.dev(),
-                broadcast_buffers=False,
-                bucket_cap_mb=128,
-                find_unused_parameters=False,
             )
             self.model = self.ddp_model
         else:
@@ -143,6 +134,8 @@ class DiffusionDx(nn.Module):
                 )
             self.use_ddp = False
             self.ddp_model = self.model
+
+        self.opt = get_opt(self.opt_name, list(self.model.parameters()), lr=lr)
 
     def __getstate__(self):
         snapshot = {}
@@ -161,6 +154,9 @@ class DiffusionDx(nn.Module):
 
     def forward(self, x, us):
         return self.unroll(x, us)
+
+    def unroll(self, x, us):
+        raise NotImplementedError
 
 
 class DDPMDx(DiffusionDx):
@@ -205,7 +201,7 @@ class DDPMDx(DiffusionDx):
 
             sample_fn_wrapper = functools.partial(
                 sample_fn,
-                self.ddp_model.module,
+                self.ddp_model,
                 (n_batch, self.obs_dim),
                 clip_denoised=self.clip_denoised,
             )
@@ -263,7 +259,7 @@ class DDPMDx(DiffusionDx):
             )
 
             dx_sample = sample_fn(
-                self.ddp_model.module,
+                self.ddp_model,
                 (n_batch, self.obs_dim),
                 clip_denoised=self.clip_denoised,
                 model_kwargs={"state": xt, "action": ut},

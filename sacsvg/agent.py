@@ -110,15 +110,74 @@ class SACSVGAgent(Agent):
         self.rew = utils.mlp(
             obs_dim + action_dim, rew_hidden_dim, 1, rew_hidden_depth
         ).to(self.device)
-        self.rew_opt = torch.optim.Adam(self.rew.parameters(), lr=rew_lr)
 
         self.done = utils.mlp(
             obs_dim + action_dim, done_hidden_dim, 1, done_hidden_depth
         ).to(self.device)
+
+        self.actor = actor.to(self.device)
+
+        self.critic = None
+        if critic is not None:
+            self.critic = critic.to(self.device)
+            self.critic_target = copy.deepcopy(self.critic)
+            self.critic_target.load_state_dict(self.critic.state_dict())
+            self.critic_target.train()
+
+        if dist_util.DistUtil.device == "cpu":
+            self.use_ddp = True
+            self.critic = DDP(
+                self.critic,
+                find_unused_parameters=True,
+            )
+            self.actor = DDP(
+                self.actor,
+                find_unused_parameters=True,
+            )
+            self.rew = DDP(
+                self.rew,
+                find_unused_parameters=True,
+            )
+            self.done = DDP(
+                self.done,
+                find_unused_parameters=True,
+            )
+
+        elif torch.cuda.is_available():
+            self.use_ddp = True
+            self.critic = DDP(
+                self.critic,
+                device_ids=[dist_util.DistUtil.dev()],
+                find_unused_parameters=True,
+            )
+            self.actor = DDP(
+                self.actor,
+                device_ids=[dist_util.DistUtil.dev()],
+                find_unused_parameters=True,
+            )
+            self.rew = DDP(
+                self.rew,
+                device_ids=[dist_util.DistUtil.dev()],
+                find_unused_parameters=True,
+            )
+            self.done = DDP(
+                self.done,
+                device_ids=[dist_util.DistUtil.dev()],
+                find_unused_parameters=True,
+            )
+        else:
+            if dist.get_world_size() > 1:
+                logger.warn(
+                    "Distributed training requires CUDA. "
+                    "Gradients will not be synchronized properly!"
+                )
+            self.use_ddp = False
+
+        self.rew_opt = torch.optim.Adam(self.rew.parameters(), lr=rew_lr)
+
         self.done_ctrl_accum = done_ctrl_accum
         self.done_opt = torch.optim.Adam(self.done.parameters(), lr=done_lr)
 
-        self.actor = actor.to(self.device)
         mods = [self.actor]
         params = utils.get_params(mods)
         self.actor_opt = torch.optim.Adam(params, lr=actor_lr, betas=actor_betas)
@@ -127,12 +186,7 @@ class SACSVGAgent(Agent):
         self.actor_detach_rho = actor_detach_rho
         self.actor_dx_threshold = actor_dx_threshold
 
-        self.critic = None
-        if critic is not None:
-            self.critic = critic.to(self.device)
-            self.critic_target = copy.deepcopy(self.critic)
-            self.critic_target.load_state_dict(self.critic.state_dict())
-            self.critic_target.train()
+        if self.critic is not None:
             self.critic_opt = torch.optim.Adam(self.critic.parameters(), lr=critic_lr)
             self.critic_tau = critic_tau
             self.critic_target_update_freq = critic_target_update_freq
@@ -144,75 +198,6 @@ class SACSVGAgent(Agent):
 
         if full_target_mve:
             assert ~critic_target_mve
-
-        if dist_util.DistUtil.device == "cpu":
-            self.use_ddp = True
-            self.critic = DDP(
-                self.critic,
-                broadcast_buffers=False,
-                bucket_cap_mb=128,
-                find_unused_parameters=False,
-            )
-            self.actor = DDP(
-                self.actor,
-                broadcast_buffers=False,
-                bucket_cap_mb=128,
-                find_unused_parameters=False,
-            )
-            self.rew = DDP(
-                self.rew,
-                broadcast_buffers=False,
-                bucket_cap_mb=128,
-                find_unused_parameters=False,
-            )
-            self.done = DDP(
-                self.done,
-                broadcast_buffers=False,
-                bucket_cap_mb=128,
-                find_unused_parameters=False,
-            )
-
-        elif torch.cuda.is_available():
-            self.use_ddp = True
-            self.critic = DDP(
-                self.critic,
-                device_ids=[dist_util.DistUtil.dev()],
-                output_device=dist_util.DistUtil.dev(),
-                broadcast_buffers=False,
-                bucket_cap_mb=128,
-                find_unused_parameters=False,
-            )
-            self.actor = DDP(
-                self.actor,
-                device_ids=[dist_util.DistUtil.dev()],
-                output_device=dist_util.DistUtil.dev(),
-                broadcast_buffers=False,
-                bucket_cap_mb=128,
-                find_unused_parameters=False,
-            )
-            self.rew = DDP(
-                self.rew,
-                device_ids=[dist_util.DistUtil.dev()],
-                output_device=dist_util.DistUtil.dev(),
-                broadcast_buffers=False,
-                bucket_cap_mb=128,
-                find_unused_parameters=False,
-            )
-            self.done = DDP(
-                self.done,
-                device_ids=[dist_util.DistUtil.dev()],
-                output_device=dist_util.DistUtil.dev(),
-                broadcast_buffers=False,
-                bucket_cap_mb=128,
-                find_unused_parameters=False,
-            )
-        else:
-            if dist.get_world_size() > 1:
-                logger.warn(
-                    "Distributed training requires CUDA. "
-                    "Gradients will not be synchronized properly!"
-                )
-            self.use_ddp = False
 
         self.train()
         self.last_step = 0
