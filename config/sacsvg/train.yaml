@@ -35,11 +35,13 @@ action_repeat: 1
 log_freq: 1000
 
 save_video: false
-delete_replay_at_end: true
+delete_replay_at_end: false
 
 save_freq: 100000
 save_best_eval: true
 save_zfill: 7
+
+checkpoint_path: "/home/uoft/matin/dynamics_diffusion/logs/sacsvg/mbpo_humanoid/seqdx/cuda8_625K_20231022-155709/train/best.pkl"
 
 seed: 1
 

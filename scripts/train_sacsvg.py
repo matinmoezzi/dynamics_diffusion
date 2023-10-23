@@ -32,18 +32,10 @@ from hydra.core.hydra_config import HydraConfig
 
 
 class Workspace(object):
-    def __init__(self, cfg):
-        self.work_dir = Path(HydraConfig.get().run.dir, "train").resolve()
-
+    def __init__(self, cfg, work_dir):
         self.cfg = cfg
 
-        self.log_suffix = f"[{dist_util.DistUtil.device.upper()}:{dist_util.DistUtil.get_global_rank()}]"
-        SACSVGLogger.configure(
-            str(self.work_dir),
-            log_frequency=cfg.log_freq,
-            log_suffix=self.log_suffix,
-            format_strs=cfg.format_strs,
-        )
+        self.work_dir = work_dir
 
         utils.set_seed_everywhere(cfg.seed)
         self.device = torch.device(cfg.device)
@@ -228,13 +220,6 @@ class Workspace(object):
     def __setstate__(self, d):
         self.__dict__ = d
         # override work_dir
-        self.work_dir = str(d["work_dir"]).replace("train", "sample")
-        SACSVGLogger.configure(
-            str(self.work_dir),
-            log_frequency=self.cfg.log_freq,
-            format_strs=self.cfg.format_strs,
-            log_suffix=f"[{dist_util.DistUtil.device.upper()}:{dist_util.DistUtil.get_global_rank()}]",
-        )
         self.env = utils.make_norm_env(self.cfg)
         if "max_episode_steps" in self.cfg and self.cfg.max_episode_steps is not None:
             self.env._max_episode_steps = self.cfg.max_episode_steps
@@ -276,15 +261,30 @@ def main(cfg):
     SCRIPT_DIR = os.path.dirname(os.path.realpath(__file__))
     from train_sacsvg import Workspace as W
 
+    log_suffix = (
+        f"[{dist_util.DistUtil.device.upper()}:{dist_util.DistUtil.get_global_rank()}]"
+    )
+    work_dir = Path(HydraConfig.get().run.dir, "train").resolve()
+    SACSVGLogger.configure(
+        str(work_dir),
+        log_frequency=cfg.log_freq,
+        log_suffix=log_suffix,
+        format_strs=cfg.format_strs,
+    )
     dist_util.DistUtil.setup_dist(cfg.device)
 
-    fname = os.getcwd() + "/latest.pkl"
+    fname = cfg.checkpoint_path
     if os.path.exists(fname):
-        print(f"Resuming fom {fname}")
-        with open(fname, "rb") as f:
-            workspace = pkl.load(f)
+        print(f"Resuming from {fname}")
+        try:
+            with open(fname, "rb") as f:
+                workspace = pkl.load(f)
+                workspace.work_dir = work_dir
+        except:
+            print("Failed to load checkpoint. Starting from scratch.")
+            workspace = W(cfg, work_dir=work_dir)
     else:
-        workspace = W(cfg)
+        workspace = W(cfg, work_dir=work_dir)
 
     workspace.run()
 

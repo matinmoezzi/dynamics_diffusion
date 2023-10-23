@@ -10,10 +10,14 @@ from sortedcontainers import SortedSet
 
 import pickle as pkl
 
+from dynamics_diffusion import dist_util
+
 from . import utils
+
 
 class ReplayBuffer(object):
     """Buffer to store environment transitions."""
+
     def __init__(self, obs_shape, action_shape, capacity, device, normalize_obs):
         self.obs_shape = obs_shape
         self.action_shape = action_shape
@@ -35,8 +39,14 @@ class ReplayBuffer(object):
 
     def __getstate__(self):
         d = copy.copy(self.__dict__)
-        del d['obses'], d['next_obses'], d['actions'], d['rewards'], \
-          d['not_dones'], d['not_dones_no_max']
+        del (
+            d["obses"],
+            d["next_obses"],
+            d["actions"],
+            d["rewards"],
+            d["not_dones"],
+            d["not_dones_no_max"],
+        )
         return d
 
     def __setstate__(self, d):
@@ -44,7 +54,6 @@ class ReplayBuffer(object):
 
         # Manually need to re-load the transitions with load()
         self.empty_data()
-
 
     def empty_data(self):
         obs_dtype = np.float32 if not self.pixels else np.uint8
@@ -64,7 +73,6 @@ class ReplayBuffer(object):
         self.payload = []
         self.done_idxs = None
 
-
     def __len__(self):
         return self.capacity if self.full else self.idx
 
@@ -80,11 +88,16 @@ class ReplayBuffer(object):
 
     def add(self, obs, action, reward, next_obs, done, done_no_max):
         # For saving
-        self.payload.append((
-            obs.copy(), next_obs.copy(),
-            action.copy(), reward,
-            not done, not done_no_max
-        ))
+        self.payload.append(
+            (
+                obs.copy(),
+                next_obs.copy(),
+                action.copy(),
+                reward,
+                not done,
+                not done_no_max,
+            )
+        )
 
         if self.normalize_obs:
             self.welford.add_data(obs)
@@ -108,30 +121,27 @@ class ReplayBuffer(object):
 
     def sample(self, batch_size):
         idxs = np.random.randint(
-            0, self.capacity if self.full else self.idx,
-            size=batch_size)
+            0, self.capacity if self.full else self.idx, size=batch_size
+        )
 
         obses = self.obses[idxs]
         next_obses = self.next_obses[idxs]
 
         if self.normalize_obs:
             mu, sigma = self.get_obs_stats()
-            obses = (obses-mu)/sigma
-            next_obses = (next_obses-mu)/sigma
+            obses = (obses - mu) / sigma
+            next_obses = (next_obses - mu) / sigma
 
         obses = torch.as_tensor(obses, device=self.device).float()
         actions = torch.as_tensor(self.actions[idxs], device=self.device)
         rewards = torch.as_tensor(self.rewards[idxs], device=self.device)
-        next_obses = torch.as_tensor(
-            next_obses, device=self.device).float()
+        next_obses = torch.as_tensor(next_obses, device=self.device).float()
         not_dones = torch.as_tensor(self.not_dones[idxs], device=self.device)
-        not_dones_no_max = torch.as_tensor(self.not_dones_no_max[idxs],
-                                           device=self.device)
-
-
+        not_dones_no_max = torch.as_tensor(
+            self.not_dones_no_max[idxs], device=self.device
+        )
 
         return obses, actions, rewards, next_obses, not_dones, not_dones_no_max
-
 
     def sample_multistep(self, batch_size, T):
         assert batch_size < self.idx or self.full
@@ -143,11 +153,10 @@ class ReplayBuffer(object):
         # indicies that are more than T steps away from a done
         done_idxs_sorted = np.array(list(self.done_idxs) + [last_idx])
         n_done = len(done_idxs_sorted)
-        done_idxs_raw = done_idxs_sorted - np.arange(1, n_done+1)*T
+        done_idxs_raw = done_idxs_sorted - np.arange(1, n_done + 1) * T
 
         samples_raw = npr.choice(
-            last_idx-(T+1)*n_done, size=batch_size,
-            replace=True # for speed
+            last_idx - (T + 1) * n_done, size=batch_size, replace=True  # for speed
         )
         samples_raw = sorted(samples_raw)
         js = np.searchsorted(done_idxs_raw, samples_raw)
@@ -168,7 +177,7 @@ class ReplayBuffer(object):
 
         if self.normalize_obs:
             mu, sigma = self.get_obs_stats()
-            obses = (obses-mu)/sigma
+            obses = (obses - mu) / sigma
 
         obses = torch.as_tensor(obses, device=self.device).float()
         actions = torch.as_tensor(actions, device=self.device)
@@ -177,12 +186,15 @@ class ReplayBuffer(object):
         return obses, actions, rewards
 
     def save_data(self, save_dir):
+        if dist_util.DistUtil.get_local_rank() != 0:
+            return
         if self.global_idx == self.global_last_save:
             return
         if not os.path.exists(save_dir):
             os.makedirs(save_dir)
         path = os.path.join(
-            save_dir, f'{self.global_last_save:08d}_{self.global_idx:08d}.pt')
+            save_dir, f"{self.global_last_save:08d}_{self.global_idx:08d}.pt"
+        )
 
         payload = list(zip(*self.payload))
         payload = [np.vstack(x) for x in payload]
@@ -190,18 +202,16 @@ class ReplayBuffer(object):
         torch.save(payload, path)
         self.payload = []
 
-
     def load_data(self, save_dir):
         def parse_chunk(chunk):
-            start, end = [int(x) for x in chunk.split('.')[0].split('_')]
+            start, end = [int(x) for x in chunk.split(".")[0].split("_")]
             return (start, end)
-
 
         self.idx = 0
 
         chunks = os.listdir(save_dir)
-        chunks = filter(lambda fname: 'stats' not in fname, chunks)
-        chunks = sorted(chunks, key=lambda x: int(x.split('_')[0]))
+        chunks = filter(lambda fname: "stats" not in fname, chunks)
+        chunks = sorted(chunks, key=lambda x: int(x.split("_")[0]))
 
         self.full = self.global_idx > self.capacity
         global_beginning = self.global_idx - self.capacity if self.full else 0
@@ -240,4 +250,4 @@ class ReplayBuffer(object):
             self.idx = 0
 
         last_idx = self.capacity if self.full else self.idx
-        self.done_idxs = SortedSet(np.where(1.-self.not_dones[:last_idx])[0])
+        self.done_idxs = SortedSet(np.where(1.0 - self.not_dones[:last_idx])[0])
