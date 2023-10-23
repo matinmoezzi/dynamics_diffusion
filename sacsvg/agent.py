@@ -40,7 +40,6 @@ class SACSVGAgent(Agent):
         obs_dim,
         action_dim,
         action_range,
-        device,
         dx,
         num_train_steps,
         temp,
@@ -81,14 +80,14 @@ class SACSVGAgent(Agent):
         self.obs_dim = obs_dim
         self.action_dim = action_dim
         self.action_range = action_range
-        self.device = torch.device(device)
+        self.device = dist_util.DistUtil.dev()
         self.num_train_steps = num_train_steps
         self.det_suffix = det_suffix
 
         self.discount = discount
         self.discount_horizon = torch.tensor(
             [discount**i for i in range(horizon)]
-        ).to(device)
+        ).to(self.device)
         self.seq_batch_size = seq_batch_size
 
         # self.seq_train_length = eval(seq_train_length)

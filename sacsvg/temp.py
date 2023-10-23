@@ -3,7 +3,7 @@
 import torch
 import numpy as np
 
-from dynamics_diffusion import logger
+from dynamics_diffusion import dist_util, logger
 
 
 def eval_float_maybe(x):
@@ -25,9 +25,8 @@ class LearnTemp:
         entr_decay_factor,
         only_decrease_alpha,
         lr,
-        device,
     ):
-        self.device = device
+        self.device = dist_util.DistUtil.dev()
         self.init_temp = init_temp
         self.max_steps = max_steps
         self.log_alpha = torch.tensor(np.log(init_temp)).to(self.device)

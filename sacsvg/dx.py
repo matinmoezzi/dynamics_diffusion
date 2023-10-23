@@ -289,6 +289,7 @@ class SeqDx(nn.Module):
             self.model.device = torch.device(device)
             self.ddp_model.device_ids = [torch.device(device).index]
             self.model.device_ids = [torch.device(device).index]
+        return self
 
     def update_step(self, obs, action, reward, step):
         assert obs.dim() == 3

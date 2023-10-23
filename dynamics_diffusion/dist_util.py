@@ -73,7 +73,7 @@ class DistUtil:
             if th.cuda.is_available():
                 if dist.is_initialized():
                     return th.device(f"cuda:{os.environ['LOCAL_RANK']}")
-                return th.device(f"cuda")
+                return th.device(f"cuda:0")
             return th.device("cpu")
 
     @classmethod

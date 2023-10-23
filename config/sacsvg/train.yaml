@@ -41,7 +41,7 @@ save_freq: 100000
 save_best_eval: true
 save_zfill: 7
 
-checkpoint_path: "/home/uoft/matin/dynamics_diffusion/logs/sacsvg/mbpo_humanoid/seqdx/cuda8_625K_20231022-155709/train/best.pkl"
+checkpoint_path: ""
 
 seed: 1
 
@@ -62,7 +62,6 @@ agent:
   obs_dim: ${obs_dim}
   action_dim: ${action_dim}
   action_range: ${action_range}
-  device: ${device}
   dx: ${dx}
   num_train_steps: ${num_train_steps}
 
@@ -133,7 +132,6 @@ learn_temp:
   entr_decay_factor: 0.
   only_decrease_alpha: false
   lr: 1e-4
-  device: ${device}
 
 hydra:
   searchpath:
