@@ -1,7 +1,7 @@
 defaults:
   - _self_
   - env: mbpo_humanoid
-  - dx: ddpm_dx
+  - dx: seqdx
   # - hydra/sweeper: svg
   # - hydra/launcher: submitit_slurm
 
@@ -37,7 +37,7 @@ log_freq: 1000
 save_video: false
 delete_replay_at_end: true
 
-save_freq: 10000
+save_freq: 100000
 save_best_eval: true
 save_zfill: 7
 

@@ -281,6 +281,15 @@ class SeqDx(nn.Module):
             self.use_ddp = False
             self.ddp_model = self.model
 
+    def to(self, device):
+        self.model.to(device)
+        if self.use_ddp:
+            self.ddp_model.to(device)
+            self.ddp_model.device = torch.device(device)
+            self.model.device = torch.device(device)
+            self.ddp_model.device_ids = [torch.device(device).index]
+            self.model.device_ids = [torch.device(device).index]
+
     def update_step(self, obs, action, reward, step):
         assert obs.dim() == 3
         T, batch_size, _ = obs.shape
@@ -311,3 +320,8 @@ class SeqDx(nn.Module):
         return self.model.unroll_policy(
             init_x, policy, sample=sample, last_u=last_u, detach_xt=detach_xt
         )
+
+    def unroll(self, x, us, detach_xt=False):
+        if hasattr(self.model, "module"):
+            return self.model.module.unroll(x, us, detach_xt=detach_xt)
+        return self.model.unroll(x, us, detach_xt=detach_xt)

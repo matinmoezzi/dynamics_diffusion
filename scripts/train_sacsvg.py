@@ -209,9 +209,10 @@ class Workspace(object):
                 shutil.rmtree(self.replay_dir)
 
     def save(self, tag="latest"):
-        path = os.path.join(self.work_dir, f"{tag}.pkl")
-        with open(path, "wb") as f:
-            pkl.dump(self, f)
+        if dist_util.DistUtil.get_local_rank() == 0:
+            path = os.path.join(self.work_dir, f"{tag}.pkl")
+            with open(path, "wb") as f:
+                pkl.dump(self, f)
 
     @staticmethod
     def load(work_dir, tag="latest"):
@@ -227,12 +228,12 @@ class Workspace(object):
     def __setstate__(self, d):
         self.__dict__ = d
         # override work_dir
-        self.work_dir = os.getcwd()
-        SACSVGLogger(
+        self.work_dir = str(d["work_dir"]).replace("train", "sample")
+        SACSVGLogger.configure(
             str(self.work_dir),
             log_frequency=self.cfg.log_freq,
             format_strs=self.cfg.format_strs,
-            log_suffix=self.log_suffix,
+            log_suffix=f"[{dist_util.DistUtil.device.upper()}:{dist_util.DistUtil.get_global_rank()}]",
         )
         self.env = utils.make_norm_env(self.cfg)
         if "max_episode_steps" in self.cfg and self.cfg.max_episode_steps is not None:

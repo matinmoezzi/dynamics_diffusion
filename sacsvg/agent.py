@@ -213,6 +213,27 @@ class SACSVGAgent(Agent):
             self.actor_dx_threshold = None
             self.rolling_dx_loss = None
 
+    def to(self, device="cuda"):
+        self.dx.to(device)
+        self.rew.to(device)
+        self.done.to(device)
+        self.actor.to(device)
+        if self.critic is not None:
+            self.critic.to(device)
+
+        if hasattr(self.rew, "module"):
+            self.rew.device = torch.device(device)
+            self.rew.device_ids = [torch.device(device).index]
+        if hasattr(self.done, "module"):
+            self.done.device = torch.device(device)
+            self.done.device_ids = [torch.device(device).index]
+        if hasattr(self.actor, "module"):
+            self.actor.device = torch.device(device)
+            self.actor.device_ids = [torch.device(device).index]
+        if hasattr(self.critic, "module"):
+            self.critic.device = torch.device(device)
+            self.critic.device_ids = [torch.device(device).index]
+
     def train(self, training=True):
         self.training = training
         self.dx.train(training)

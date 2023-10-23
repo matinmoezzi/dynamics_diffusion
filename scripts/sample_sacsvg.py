@@ -15,6 +15,8 @@ import dmc2gym
 
 import matplotlib.pyplot as plt
 
+from dynamics_diffusion import dist_util
+
 plt.style.use("bmh")
 from matplotlib import cm
 
@@ -25,20 +27,14 @@ from sacsvg import utils, dx
 
 
 def main():
-    import sys
-    from IPython.core import ultratb
-
-    sys.excepthook = ultratb.FormattedTB(
-        mode="Verbose", color_scheme="Linux", call_pdb=1
-    )
-
     parser = argparse.ArgumentParser()
-    parser.add_argument("exp_root", type=str)
+    parser.add_argument("--exp_root", type=str, required=True)
     parser.add_argument("--n_episodes", type=int, default=100)
     parser.add_argument("--n_steps", type=int, default=None)
     parser.add_argument("--n_vids", type=int, default=10)
     parser.add_argument("--pkl_tag", type=str, default="latest")
     parser.add_argument("--output_dir_tag", type=str, default="eval")
+    parser.add_argument("--device", type=str, default="cuda")
     parser.add_argument("--framerate", type=int, default=16)
     parser.add_argument(
         "--mode", type=str, default="mean", choices=["mean", "sample", "ctrl"]
@@ -51,6 +47,8 @@ def main():
     parser.add_argument("--show_dones", action="store_true")
     args = parser.parse_args()
 
+    dist_util.DistUtil.setup_dist(device=args.device)
+
     ev = EvalVis(args)
     ev.run()
 
@@ -58,25 +56,27 @@ def main():
 class EvalVis:
     def __init__(self, args):
         self.args = args
-        self.eval_dir = f"{args.exp_root}/{args.output_dir_tag}.{args.pkl_tag}.{args.mode}.{args.vid_mode}"
+        self.eval_dir = (
+            f"{args.exp_root}/sample/{args.pkl_tag}_{args.mode}_{args.vid_mode}"
+        )
         if os.path.exists(self.eval_dir):
             shutil.rmtree(self.eval_dir)
         os.makedirs(self.eval_dir, exist_ok=True)
-        fname = f"{args.exp_root}/{args.pkl_tag}.pkl"
+        fname = f"{args.exp_root}/train/{args.pkl_tag}.pkl"
         if os.path.exists(fname):
             self.exp = pkl.load(open(fname, "rb"))
         else:
-            fname = f"{args.exp_root}/{args.pkl_tag}.pt"
+            fname = f"{args.exp_root}/train/{args.pkl_tag}.pt"
             if os.path.exists(fname):
                 self.exp = torch.load(fname)
             else:
                 raise RuntimeError("unable to find checkpoint")
-        del self.exp.logger
         self.env = self.exp.env
         self.max_obs = torch.zeros(self.exp.agent.obs_dim)
         self.reward_bounds = [0.0, 1.1]
         self.dx = self.exp.agent.dx
         self.domain_name = self.exp.cfg.env_name
+        self.exp.agent.to(dist_util.DistUtil.dev())
 
     def run(self):
         rews = []
@@ -100,7 +100,6 @@ class EvalVis:
         domain_name = self.domain_name
         horizon = self.exp.agent.horizon
 
-        device = "cuda"
         done = False
         total_reward = 0.0
         reward = 0.0
@@ -130,7 +129,7 @@ class EvalVis:
             if self.exp.cfg.normalize_obs:
                 mu, sigma = replay_buffer.get_obs_stats()
                 obs = (obs - mu) / sigma
-            obs = torch.FloatTensor(obs).to(device)
+            obs = torch.FloatTensor(obs).to(dist_util.DistUtil.dev())
 
             if args.mode == "mean":
                 action_seq, _, _ = self.exp.agent.dx.unroll_policy(

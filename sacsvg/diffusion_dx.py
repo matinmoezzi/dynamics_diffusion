@@ -158,6 +158,15 @@ class DiffusionDx(nn.Module):
     def unroll(self, x, us):
         raise NotImplementedError
 
+    def to(self, device):
+        self.model.to(device)
+        if self.use_ddp:
+            self.ddp_model.to(device)
+            self.ddp_model.device = torch.device(device)
+            self.model.device = torch.device(device)
+            self.ddp_model.device_ids = [torch.device(device).index]
+            self.model.device_ids = [torch.device(device).index]
+
 
 class DDPMDx(DiffusionDx):
     def __init__(self, use_ddim, clip_denoised, schedule_sampler, **kwargs):
