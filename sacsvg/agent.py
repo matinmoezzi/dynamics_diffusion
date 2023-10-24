@@ -127,19 +127,15 @@ class SACSVGAgent(Agent):
             self.use_ddp = True
             self.critic = DDP(
                 self.critic,
-                find_unused_parameters=True,
             )
             self.actor = DDP(
                 self.actor,
-                find_unused_parameters=True,
             )
             self.rew = DDP(
                 self.rew,
-                find_unused_parameters=True,
             )
             self.done = DDP(
                 self.done,
-                find_unused_parameters=True,
             )
 
         elif torch.cuda.is_available():
@@ -147,22 +143,18 @@ class SACSVGAgent(Agent):
             self.critic = DDP(
                 self.critic,
                 device_ids=[dist_util.DistUtil.dev()],
-                find_unused_parameters=True,
             )
             self.actor = DDP(
                 self.actor,
                 device_ids=[dist_util.DistUtil.dev()],
-                find_unused_parameters=True,
             )
             self.rew = DDP(
                 self.rew,
                 device_ids=[dist_util.DistUtil.dev()],
-                find_unused_parameters=True,
             )
             self.done = DDP(
                 self.done,
                 device_ids=[dist_util.DistUtil.dev()],
-                find_unused_parameters=True,
             )
         else:
             if dist.get_world_size() > 1:

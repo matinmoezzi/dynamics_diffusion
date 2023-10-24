@@ -110,8 +110,18 @@ class Workspace(object):
         self.agent.reset()
         obs = self.env.reset()
 
+        if self.step != 0:
+            self.cfg.num_train_steps += self.step
+
         start_time = time.time()
-        for _ in trange(self.step, int(self.cfg.num_train_steps), initial=self.step):
+        for _ in trange(
+            self.step,
+            int(self.cfg.num_train_steps),
+            initial=self.step,
+            total=int(self.cfg.num_train_steps),
+            desc="Training",
+            file=sys.stdout,
+        ):
             if self.done:
                 if self.step > 0:
                     logger.logkv_mean(
@@ -280,6 +290,8 @@ def main(cfg):
             with open(fname, "rb") as f:
                 workspace = pkl.load(f)
                 workspace.work_dir = work_dir
+                workspace.replay_dir = os.path.join(work_dir, "replay")
+                workspace.cfg = cfg
         except:
             print("Failed to load checkpoint. Starting from scratch.")
             workspace = W(cfg, work_dir=work_dir)
