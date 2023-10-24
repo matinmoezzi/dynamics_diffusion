@@ -271,6 +271,7 @@ def main(cfg):
     SCRIPT_DIR = os.path.dirname(os.path.realpath(__file__))
     from train_sacsvg import Workspace as W
 
+    dist_util.DistUtil.setup_dist(cfg.device)
     log_suffix = (
         f"[{dist_util.DistUtil.device.upper()}:{dist_util.DistUtil.get_global_rank()}]"
     )
@@ -281,7 +282,6 @@ def main(cfg):
         log_suffix=log_suffix,
         format_strs=cfg.format_strs,
     )
-    dist_util.DistUtil.setup_dist(cfg.device)
 
     fname = cfg.checkpoint_path
     if os.path.exists(fname):
