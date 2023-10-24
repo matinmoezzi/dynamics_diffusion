@@ -292,6 +292,7 @@ def main(cfg):
                 workspace.work_dir = work_dir
                 workspace.replay_dir = os.path.join(work_dir, "replay")
                 workspace.cfg = cfg
+                workspace.agent.to(dist_util.DistUtil.dev())
         except:
             print("Failed to load checkpoint. Starting from scratch.")
             workspace = W(cfg, work_dir=work_dir)

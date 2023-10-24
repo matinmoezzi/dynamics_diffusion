@@ -282,6 +282,7 @@ class SeqDx(nn.Module):
             self.ddp_model = self.model
 
     def to(self, device):
+        super().to(device)
         self.model.to(device)
         if self.use_ddp:
             self.ddp_model.to(device)
