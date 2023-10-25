@@ -240,6 +240,8 @@ class Workspace(object):
         if os.path.exists(self.replay_dir):
             self.replay_buffer.load_data(self.replay_dir)
 
+        self.temp = hydra.utils.instantiate(self.cfg.agent.temp)
+
 
 def steps_to_human_readable(step_count) -> str:
     # Ensure the input is an integer
@@ -293,8 +295,8 @@ def main(cfg):
                 workspace.replay_dir = os.path.join(work_dir, "replay")
                 workspace.cfg = cfg
                 workspace.agent.to(dist_util.DistUtil.dev())
-        except:
-            print("Failed to load checkpoint. Starting from scratch.")
+        except Exception as e:
+            print("Failed to load checkpoint. Starting from scratch.", e)
             workspace = W(cfg, work_dir=work_dir)
     else:
         workspace = W(cfg, work_dir=work_dir)

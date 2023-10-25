@@ -193,7 +193,6 @@ class SACSVGAgent(Agent):
         self.rew.to(device)
         self.done.to(device)
         self.actor.to(device)
-        self.temp.to(device)
         if self.critic is not None:
             self.critic.to(device)
             self.critic_target.to(device)
