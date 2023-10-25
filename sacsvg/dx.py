@@ -306,9 +306,7 @@ class SeqDx(nn.Module):
             assert len(self.opt.param_groups) == 1
             params = self.opt.param_groups[0]["params"]
             torch.nn.utils.clip_grad_norm_(params, self.clip_grad_norm)
-        # import pdb
 
-        # pdb.set_trace()
         self.opt.step()
 
         logger.logkv_mean("train_model/obs_loss", obs_loss, step)

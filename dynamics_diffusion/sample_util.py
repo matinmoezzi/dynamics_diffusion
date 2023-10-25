@@ -187,10 +187,11 @@ class Sampler:
 
 
 class DDPMSampler(Sampler):
-    def __init__(self, use_ddim, clip_denoised, **kwargs):
+    def __init__(self, use_ddim, clip_denoised, progress, **kwargs):
         super().__init__(**kwargs)
         self.use_ddim = use_ddim
         self.clip_denoised = clip_denoised
+        self.progress = progress
 
     def _get_sample_fn_dynamics(self):
         sample_fn = (
@@ -204,6 +205,7 @@ class DDPMSampler(Sampler):
             self.model,
             (self.batch_size, self.state_dim),
             clip_denoised=self.clip_denoised,
+            progress=self.progress,
         )
 
         return sample_fn_wrapper

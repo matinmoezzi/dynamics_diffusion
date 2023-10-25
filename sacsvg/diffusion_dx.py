@@ -169,7 +169,7 @@ class DiffusionDx(nn.Module):
 
 
 class DDPMDx(DiffusionDx):
-    def __init__(self, use_ddim, clip_denoised, schedule_sampler, **kwargs):
+    def __init__(self, use_ddim, clip_denoised, schedule_sampler, progress, **kwargs):
         super().__init__(**kwargs)
         self.use_ddim = use_ddim
         self.clip_denoised = clip_denoised
@@ -177,6 +177,7 @@ class DDPMDx(DiffusionDx):
         self.schedule_sampler = create_named_schedule_sampler(
             schedule_sampler, self.diffusion
         )
+        self.progress = progress
 
     def unroll_policy(self, init_x, policy, sample=True, last_u=True, detach_xt=False):
         assert init_x.dim() == 2
@@ -213,6 +214,7 @@ class DDPMDx(DiffusionDx):
                 self.ddp_model,
                 (n_batch, self.obs_dim),
                 clip_denoised=self.clip_denoised,
+                progress=self.progress,
             )
             dx_sample = sample_fn_wrapper(model_kwargs={"state": xt, "action": ut})
 
@@ -292,7 +294,6 @@ class DDPMDx(DiffusionDx):
         T, batch_size, _ = obs.shape
 
         self.opt.zero_grad()
-        obs_losses = []
         diffusion_losses = []
         for horizon in range(T - 1):
             t, weights = self.schedule_sampler.sample(
@@ -302,7 +303,7 @@ class DDPMDx(DiffusionDx):
             compute_losses = functools.partial(
                 self.diffusion.training_losses,
                 self.ddp_model,
-                obs[horizon + 1],
+                obs[horizon + 1] - obs[horizon],
                 t,
                 model_kwargs={"state": obs[horizon], "action": action[horizon]},
             )
@@ -316,38 +317,6 @@ class DDPMDx(DiffusionDx):
 
             diffusion_losses.append(loss)
 
-            if self.diffusion.model_mean_type != ModelMeanType.START_X:
-                if self.freeze_dims is not None:
-                    obs_frozen = obs[horizon][:, self.freeze_dims]
-                sample_fn = (
-                    self.diffusion.p_sample_loop
-                    if not self.use_ddim
-                    else self.diffusion.ddim_sample_loop
-                )
-
-                dx_sample = sample_fn(
-                    self.ddp_model.module,
-                    (batch_size, self.obs_dim),
-                    clip_denoised=self.clip_denoised,
-                    model_kwargs={"state": obs[horizon], "action": action[horizon]},
-                )
-
-                xtp1 = obs[horizon] + dx_sample
-
-                if self.freeze_dims is not None:
-                    xtp1[:, self.freeze_dims] = obs_frozen
-
-                target_obs = obs[horizon + 1]
-
-                assert xtp1.size() == target_obs.size()
-
-                obs_loss = F.mse_loss(xtp1, target_obs, reduction="mean")
-
-            else:
-                obs_loss = losses["mse"].mean()
-
-            obs_losses.append(obs_loss)
-
             loss.backward()
 
         if self.clip_grad_norm is not None:
@@ -360,16 +329,11 @@ class DDPMDx(DiffusionDx):
         for ema in self.ema:
             ema.update(self.model.parameters())
 
-        step_obs_loss = torch.stack(obs_losses).mean().item()
         step_diffusion_loss = torch.stack(diffusion_losses).mean().item()
 
-        logger.logkv_mean("train_model/obs_loss", step_obs_loss, step)
         logger.logkv_mean("train_diffusion/loss", step_diffusion_loss, step)
 
-        return (
-            torch.stack(diffusion_losses).mean().item(),
-            torch.stack(obs_losses).mean().item(),
-        )
+        return torch.stack(diffusion_losses).mean().item()
 
 
 class ScoreSDEDx(DiffusionDx):
@@ -515,47 +479,10 @@ class ScoreSDEDx(DiffusionDx):
         target_obs = obs[1:]
         assert pred_obs.size() == target_obs.size()
 
-        ttt = F.mse_loss(pred_obs, target_obs)
-        obs_loss = F.mse_loss(pred_obs, target_obs, reduction="mean")
-
         self.opt.zero_grad()
-        obs_losses = []
         diffusion_losses = []
         for horizon in range(T - 1):
             model_kwargs = {"state": obs[horizon], "action": action[horizon]}
-
-            # Observation Loss
-            if self.freeze_dims is not None:
-                obs_frozen = obs[horizon][:, self.freeze_dims]
-            sampling_eps = 1e-3
-            sde = self.diffusion
-            if isinstance(sde, VESDE):
-                sampling_eps = 1e-5
-            sampling_shape = (batch_size, self.obs_dim)
-            inverse_scaler = lambda x: x
-            sampling_fn = functools.partial(
-                sde_sampling.get_sampling_fn,
-                self.sde_sampler,
-                sde,
-                sampling_shape,
-                inverse_scaler,
-                sampling_eps,
-                continuous=self.sde_continuous,
-                device=dist_util.DistUtil.dev(),
-            )
-            dx_sample, n = sampling_fn(model_kwargs=model_kwargs)(self.model)
-
-            # Assume that s_{t+1} = s_t + dx_t
-            xtp1 = obs[horizon] + dx_sample
-
-            if self.freeze_dims is not None:
-                xtp1[:, self.freeze_dims] = obs_frozen
-
-            target_obs = obs[horizon + 1]
-
-            obs_loss = F.mse_loss(xtp1, target_obs, reduction="mean")
-
-            obs_losses.append(obs_loss)
 
             # Score SDE Score-matching Loss
             if self.sde_continuous:
@@ -565,7 +492,10 @@ class ScoreSDEDx(DiffusionDx):
                     + self.sde_eps
                 )
                 compute_losses = functools.partial(
-                    self._continuous_loss, obs[horizon + 1], t, model_kwargs
+                    self._continuous_loss,
+                    obs[horizon + 1] - obs[horizon],
+                    t,
+                    model_kwargs,
                 )
             else:
                 assert (
@@ -580,7 +510,7 @@ class ScoreSDEDx(DiffusionDx):
                 compute_losses = functools.partial(
                     self.diffusion.training_losses,
                     model=self.ddp_model,
-                    batch=obs[horizon + 1],
+                    batch=obs[horizon + 1] - obs[horizon],
                     labels=t,
                     model_kwargs=model_kwargs,
                 )
@@ -596,20 +526,17 @@ class ScoreSDEDx(DiffusionDx):
             assert len(self.opt.param_groups) == 1
             params = self.opt.param_groups[0]["params"]
             torch.nn.utils.clip_grad_norm_(params, self.clip_grad_norm)
+
         self.opt.step()
+
         for ema in self.ema:
             ema.update(self.model.parameters())
 
-        step_obs_loss = torch.stack(obs_losses).mean().item()
         step_diffusion_loss = torch.stack(diffusion_losses).mean().item()
 
-        logger.logkv_mean("train_model/obs_loss", step_obs_loss, step)
         logger.logkv_mean("train_diffusion/loss", step_diffusion_loss, step)
 
-        return (
-            torch.stack(diffusion_losses).mean().item(),
-            torch.stack(obs_losses).mean().item(),
-        )
+        return torch.stack(diffusion_losses).mean().item()
 
     def _continuous_loss(self, batch, t, model_kwargs):
         reduce_op = (

@@ -18,3 +18,5 @@ fp16_scale_growth: 1e-3
 use_ddim: true
 clip_denoised: false
 schedule_sampler: "uniform"
+
+progress: True
