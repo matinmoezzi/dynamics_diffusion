@@ -475,10 +475,6 @@ class ScoreSDEDx(DiffusionDx):
         assert obs.dim() == 3
         T, batch_size, _ = obs.shape
 
-        pred_obs = self.unroll(obs[0], action[:-1], detach_xt=self.detach_xt)
-        target_obs = obs[1:]
-        assert pred_obs.size() == target_obs.size()
-
         self.opt.zero_grad()
         diffusion_losses = []
         for horizon in range(T - 1):
@@ -563,7 +559,7 @@ class ScoreSDEDx(DiffusionDx):
 
     def _get_score(self, x, t, model_kwargs=None):
         if isinstance(self.diffusion, VPSDE) or isinstance(self.diffusion, subVPSDE):
-            if self.continuous or isinstance(self.diffusion, subVPSDE):
+            if self.sde_continuous or isinstance(self.diffusion, subVPSDE):
                 # For VP-trained models, t=0 corresponds to the lowest noise level
                 # The maximum value of time embedding is assumed to 999 for
                 # continuously-trained models.
