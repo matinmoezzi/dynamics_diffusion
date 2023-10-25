@@ -18,6 +18,7 @@ from tqdm import trange
 from dynamics_diffusion import dist_util
 from dynamics_diffusion import logger
 from dynamics_diffusion.logger import SACSVGLogger
+from scripts.train_diffusion import karras_distillation
 
 setproctitle("sacsvg")
 
@@ -258,6 +259,9 @@ def get_runtime_choice(key):
     return instance.runtime.choices[f"{key}@trainer.{key}"]
 
 
+OmegaConf.register_new_resolver(
+    "karras_distillation", karras_distillation, replace=True
+)
 OmegaConf.register_new_resolver("get_runtime_choice", get_runtime_choice, replace=True)
 OmegaConf.register_new_resolver(
     "human_readable_steps", steps_to_human_readable, replace=True

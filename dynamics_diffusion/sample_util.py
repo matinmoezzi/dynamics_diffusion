@@ -314,7 +314,6 @@ class CMSampler(Sampler):
         return sample_fn_wrapper
 
     def _get_sample_fn_dynamics(self):
-        model_kwargs = {}
         if self.sampler == "multistep":
             assert len(self.ts) > 0
             ts = tuple(int(x) for x in self.ts.split(","))
@@ -323,14 +322,6 @@ class CMSampler(Sampler):
         generator = get_generator(
             self.cm_sampler.generator, self.num_samples, self.cm_sampler.seed
         )
-        if self.model.class_cond:
-            classes = torch.randint(
-                low=0,
-                high=NUM_CLASSES,
-                size=(self.batch_size,),
-                device=dist_util.DistUtil.dev(),
-            )
-            model_kwargs["y"] = classes
         sample_fn_wrapper = functools.partial(
             karras_sample,
             self.diffusion,
@@ -348,7 +339,6 @@ class CMSampler(Sampler):
             s_noise=self.s_noise,
             generator=generator,
             ts=ts,
-            model_kwargs=model_kwargs,
         )
         return sample_fn_wrapper
 

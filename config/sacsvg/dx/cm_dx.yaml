@@ -1,0 +1,42 @@
+defaults:
+  - _self_
+  - /dynamics/model@model: MLP
+  - /dynamics/diffusion@diffusion: karras
+_target_: sacsvg.diffusion_dx.CMDx
+
+env_name: ${..env_name}
+obs_dim: ${..obs_dim}
+action_dim: ${..action_dim}
+horizon: ${..agent.horizon}
+detach_xt: true
+clip_grad_norm: null
+
+teacher_model_path: ""
+training_mode: "consistency_distillation"
+target_ema_mode: "fixed"
+scale_mode: "fixed"
+start_ema: 0.0
+start_scales: 40
+end_scales: 40
+distill_steps_per_iter: 50000
+
+schedule_sampler: "uniform"
+lr: 1e-4
+lr_anneal_steps: 0
+ema_rate: "0.9999"  # comma-separated list of EMA values
+opt_name: "AdamW"
+weight_decay: 0.0
+use_fp16: False
+total_training_steps: ${..num_train_steps}
+fp16_scale_growth: 1e-3
+
+generator: "determ-indiv"
+sampler: "onestep"
+s_churn: 0.0
+s_tmin: 0.0
+s_tmax: .inf
+s_noise: 1.0
+steps: 40
+seed: 42
+ts: ""
+clip_denoised: False

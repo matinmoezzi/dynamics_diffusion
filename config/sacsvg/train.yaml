@@ -1,7 +1,7 @@
 defaults:
   - _self_
   - env: mbpo_humanoid
-  - dx: scoresde_dx 
+  - dx: cm_dx 
   # - hydra/sweeper: svg
   # - hydra/launcher: submitit_slurm
 
