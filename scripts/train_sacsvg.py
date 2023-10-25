@@ -212,15 +212,12 @@ class Workspace(object):
 
     def save(self, tag="latest"):
         if dist_util.DistUtil.get_local_rank() == 0:
-            path = os.path.join(self.work_dir, f"{tag}.pkl")
-            with open(path, "wb") as f:
-                pkl.dump(self, f)
+            path = os.path.join(self.work_dir, f"{tag}.pt")
+            torch.save(self, path)
 
     @staticmethod
-    def load(work_dir, tag="latest"):
-        path = os.path.join(work_dir, f"{tag}.pkl")
-        with open(path, "rb") as f:
-            return pkl.load(f)
+    def load(path):
+        return torch.load(path, map_location=dist_util.DistUtil.dev())
 
     def __getstate__(self):
         d = copy.copy(self.__dict__)
@@ -290,7 +287,7 @@ def main(cfg):
         print(f"Resuming from {fname}")
         try:
             with open(fname, "rb") as f:
-                workspace = pkl.load(f)
+                workspace = Workspace.load(fname)
                 workspace.work_dir = work_dir
                 workspace.replay_dir = os.path.join(work_dir, "replay")
                 workspace.cfg = cfg
