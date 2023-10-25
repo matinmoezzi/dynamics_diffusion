@@ -61,7 +61,6 @@ class DiffusionDx(nn.Module):
         obs_dim,
         action_dim,
         horizon,
-        device,
         detach_xt,
         clip_grad_norm,
         lr,
@@ -76,7 +75,7 @@ class DiffusionDx(nn.Module):
         self.obs_dim = obs_dim
         self.action_dim = action_dim
         self.horizon = horizon
-        self.device = device
+        self.device = dist_util.DistUtil.dev()
         self.detach_xt = detach_xt
         self.clip_grad_norm = clip_grad_norm
         self.opt_name = opt_name

@@ -41,7 +41,7 @@ save_freq: 100000
 save_best_eval: true
 save_zfill: 7
 
-checkpoint_path: ""
+checkpoint_path: "/home/uoft/matin/dynamics_diffusion/logs/sacsvg/mbpo_humanoid/seqdx/cuda8_250K_20231023-213415/train/latest.pkl"
 
 seed: 1
 

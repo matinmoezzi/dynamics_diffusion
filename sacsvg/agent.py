@@ -125,36 +125,20 @@ class SACSVGAgent(Agent):
 
         if dist_util.DistUtil.device == "cpu":
             self.use_ddp = True
-            self.critic = DDP(
-                self.critic,
-            )
-            self.actor = DDP(
-                self.actor,
-            )
-            self.rew = DDP(
-                self.rew,
-            )
-            self.done = DDP(
-                self.done,
-            )
+            self.critic = DDP(self.critic)
+            self.actor = DDP(self.actor)
+            self.rew = DDP(self.rew)
+            self.done = DDP(self.done)
+            self.critic_target = DDP(self.critic_target)
 
         elif torch.cuda.is_available():
             self.use_ddp = True
-            self.critic = DDP(
-                self.critic,
-                device_ids=[dist_util.DistUtil.dev()],
-            )
-            self.actor = DDP(
-                self.actor,
-                device_ids=[dist_util.DistUtil.dev()],
-            )
-            self.rew = DDP(
-                self.rew,
-                device_ids=[dist_util.DistUtil.dev()],
-            )
-            self.done = DDP(
-                self.done,
-                device_ids=[dist_util.DistUtil.dev()],
+            self.critic = DDP(self.critic, device_ids=[dist_util.DistUtil.dev()])
+            self.actor = DDP(self.actor, device_ids=[dist_util.DistUtil.dev()])
+            self.rew = DDP(self.rew, device_ids=[dist_util.DistUtil.dev()])
+            self.done = DDP(self.done, device_ids=[dist_util.DistUtil.dev()])
+            self.critic_target = DDP(
+                self.critic_target, device_ids=[dist_util.DistUtil.dev()]
             )
         else:
             if dist.get_world_size() > 1:
@@ -209,8 +193,10 @@ class SACSVGAgent(Agent):
         self.rew.to(device)
         self.done.to(device)
         self.actor.to(device)
+        self.temp.to(device)
         if self.critic is not None:
             self.critic.to(device)
+            self.critic_target.to(device)
 
         if hasattr(self.rew, "module"):
             self.rew.device = torch.device(device)
@@ -224,6 +210,9 @@ class SACSVGAgent(Agent):
         if hasattr(self.critic, "module"):
             self.critic.device = torch.device(device)
             self.critic.device_ids = [torch.device(device).index]
+        if hasattr(self.critic_target, "module"):
+            self.critic_target.device = torch.device(device)
+            self.critic_target.device_ids = [torch.device(device).index]
 
     def train(self, training=True):
         self.training = training

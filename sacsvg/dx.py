@@ -18,7 +18,6 @@ class SeqNN(nn.Module):
         obs_dim,
         action_dim,
         horizon,
-        device,
         detach_xt,
         clip_grad_norm,
         xu_enc_hidden_dim,
@@ -35,7 +34,7 @@ class SeqNN(nn.Module):
         self.obs_dim = obs_dim
         self.action_dim = action_dim
         self.horizon = horizon
-        self.device = device
+        self.device = dist_util.DistUtil.dev()
         self.detach_xt = detach_xt
         self.clip_grad_norm = clip_grad_norm
 
@@ -208,7 +207,6 @@ class SeqDx(nn.Module):
         obs_dim,
         action_dim,
         horizon,
-        device,
         detach_xt,
         clip_grad_norm,
         xu_enc_hidden_dim,
@@ -226,7 +224,7 @@ class SeqDx(nn.Module):
         self.obs_dim = obs_dim
         self.action_dim = action_dim
         self.horizon = horizon
-        self.device = device
+        self.device = dist_util.DistUtil.dev()
         self.detach_xt = detach_xt
         self.clip_grad_norm = clip_grad_norm
         self.xu_enc_hidden_dim = xu_enc_hidden_dim
@@ -243,7 +241,6 @@ class SeqDx(nn.Module):
             obs_dim,
             action_dim,
             horizon,
-            device,
             detach_xt,
             clip_grad_norm,
             xu_enc_hidden_dim,
@@ -256,7 +253,8 @@ class SeqDx(nn.Module):
         )
         self.model = self.model.to(dist_util.DistUtil.dev())
 
-        self.opt = torch.optim.Adam(self.model.params, lr=lr)
+        # self.opt = torch.optim.Adam(self.model.params, lr=lr)
+        self.opt = torch.optim.Adam(self.model.parameters(), lr=lr)
 
         if dist_util.DistUtil.device == "cpu":
             self.use_ddp = True
@@ -308,6 +306,9 @@ class SeqDx(nn.Module):
             assert len(self.opt.param_groups) == 1
             params = self.opt.param_groups[0]["params"]
             torch.nn.utils.clip_grad_norm_(params, self.clip_grad_norm)
+        # import pdb
+
+        # pdb.set_trace()
         self.opt.step()
 
         logger.logkv_mean("train_model/obs_loss", obs_loss, step)

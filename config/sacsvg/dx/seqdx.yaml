@@ -3,7 +3,6 @@ env_name: ${..env_name}
 obs_dim: ${..obs_dim}
 action_dim: ${..action_dim}
 horizon: ${..agent.horizon}
-device: ${..device}
 detach_xt: true
 xu_enc_hidden_dim: 512
 xu_enc_hidden_depth: 2
