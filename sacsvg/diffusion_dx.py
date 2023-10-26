@@ -365,6 +365,14 @@ class CMDx(DiffusionDx):
         self.seed = seed
         self.ts = ts
 
+        self.target_ema_mode = target_ema_mode
+        self.start_ema = start_ema
+        self.scale_mode = scale_mode
+        self.start_scales = start_scales
+        self.end_scales = end_scales
+        self.distill_steps_per_iter = distill_steps_per_iter
+        self.total_training_steps = total_training_steps
+
         self.training_mode = training_mode
         self.weight_decay = weight_decay
         self.clip_denoised = clip_denoised
@@ -405,7 +413,10 @@ class CMDx(DiffusionDx):
 
         # load the target model for distillation, if path specified.
 
-        self.target_model = copy.deepcopy(self.model)
+        if hasattr(self.model, "module"):
+            self.target_model = copy.deepcopy(self.model.module)
+        else:
+            self.target_model = copy.deepcopy(self.model)
 
         self.target_model.to(dist_util.DistUtil.dev())
         self.target_model.train()
@@ -433,6 +444,23 @@ class CMDx(DiffusionDx):
                     self.step = 0
             else:
                 self.step = self.global_step % self.lr_anneal_steps
+
+    def __getstate__(self):
+        d = self.__dict__.copy()
+        del d["ema_scale_fn"]
+        return d
+
+    def __setstate__(self, state):
+        self.__dict__ = state
+        self.ema_scale_fn = create_ema_and_scales_fn(
+            target_ema_mode=self.target_ema_mode,
+            start_ema=self.start_ema,
+            scale_mode=self.scale_mode,
+            start_scales=self.start_scales,
+            end_scales=self.end_scales,
+            total_steps=self.total_training_steps,
+            distill_steps_per_iter=self.distill_steps_per_iter,
+        )
 
     def unroll_policy(self, init_x, policy, sample=True, last_u=True, detach_xt=False):
         assert init_x.dim() == 2
@@ -533,7 +561,7 @@ class CMDx(DiffusionDx):
                 ts = tuple(int(x) for x in self.ts.split(","))
             else:
                 ts = None
-            generator = get_generator(self.generator, self.num_samples, self.seed)
+            generator = get_generator(self.generator, 1, self.seed)
             sample_fn_wrapper = functools.partial(
                 karras_sample,
                 self.diffusion,
