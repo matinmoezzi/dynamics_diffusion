@@ -1,6 +1,6 @@
 _target_: dynamics_diffusion.script_util.create_gaussian_diffusion 
 learn_sigma: ${..model.learn_sigma}
-steps: 1000
+steps: 500
 noise_schedule: "linear"
 timestep_respacing: ""
 use_kl: False

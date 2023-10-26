@@ -19,4 +19,4 @@ use_ddim: true
 clip_denoised: false
 schedule_sampler: "uniform"
 
-progress: True
+progress: False

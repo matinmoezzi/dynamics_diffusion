@@ -1,5 +1,5 @@
 _target_: dynamics_diffusion.sde.VPSDE
 beta_min: 0.1
 beta_max: 20
-N: 1000
+N: 500
 reduce_mean: True
