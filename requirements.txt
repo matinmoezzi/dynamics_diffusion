@@ -22,4 +22,4 @@ patchelf
 cython<3
 setproctitle
 git+https://github.com/denisyarats/dmc2gym.git
-
+pygame

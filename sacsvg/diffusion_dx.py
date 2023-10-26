@@ -141,21 +141,6 @@ class DiffusionDx(nn.Module):
 
         self.opt = get_opt(self.opt_name, list(self.model.parameters()), lr=lr)
 
-    def __getstate__(self):
-        snapshot = {}
-        raw_model = self.model.module if hasattr(self.model, "module") else self.model
-        snapshot["model_state"] = raw_model.state_dict()
-        snapshot["opt_state"] = self.opt.state_dict()
-        for rate, ema in zip(self.ema_rate, self.ema):
-            snapshot[f"ema_{rate}"] = ema.state_dict()
-        return snapshot
-
-    def __setstate__(self, d):
-        self.model.load_state_dict(d["model_state"])
-        self.opt.load_state_dict(d["opt_state"])
-        for rate, ema in zip(self.ema_rate, self.ema):
-            ema.load_state_dict(d[f"ema_{rate}"])
-
     def forward(self, x, us):
         return self.unroll(x, us)
 
@@ -163,6 +148,7 @@ class DiffusionDx(nn.Module):
         raise NotImplementedError
 
     def to(self, device):
+        super().to(device)
         self.model.to(device)
         if self.use_ddp:
             self.ddp_model.to(device)
