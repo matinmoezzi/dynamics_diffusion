@@ -286,6 +286,9 @@ def main(cfg):
         format_strs=cfg.format_strs,
     )
 
+    # Choosing seed based on global rank
+    cfg.seed += dist_util.DistUtil.get_global_rank()
+
     fname = cfg.checkpoint_path
     if os.path.exists(fname):
         print(f"Resuming from {fname}")

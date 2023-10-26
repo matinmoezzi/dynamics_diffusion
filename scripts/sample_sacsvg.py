@@ -62,15 +62,13 @@ class EvalVis:
         if os.path.exists(self.eval_dir):
             shutil.rmtree(self.eval_dir)
         os.makedirs(self.eval_dir, exist_ok=True)
-        fname = f"{args.exp_root}/train/{args.pkl_tag}.pkl"
+        fname = f"{args.exp_root}/train/{args.pkl_tag}.pt"
         if os.path.exists(fname):
-            self.exp = pkl.load(open(fname, "rb"))
+            self.exp = torch.load(fname)
+            print(f"Loaded {fname}")
         else:
-            fname = f"{args.exp_root}/train/{args.pkl_tag}.pt"
-            if os.path.exists(fname):
-                self.exp = torch.load(fname)
-            else:
-                raise RuntimeError("unable to find checkpoint")
+            raise ValueError(f"Could not find {fname}")
+
         self.env = self.exp.env
         self.max_obs = torch.zeros(self.exp.agent.obs_dim)
         self.reward_bounds = [0.0, 1.1]
@@ -181,6 +179,8 @@ class EvalVis:
                         freeze = utils.freeze_mbbl_env
                     elif domain_name == "Humanoid-v2" or "mbpo" in domain_name:
                         freeze = utils.freeze_gym_env
+                    elif "v1" in domain_name:
+                        freeze = utils.freeze_env_v1
                     else:
                         freeze = utils.freeze_env
                     with freeze(env):

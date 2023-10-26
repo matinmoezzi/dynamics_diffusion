@@ -242,8 +242,7 @@ def make_norm_env(cfg):
         def set_seed(seed):
             return env.env.seed(seed)
 
-    else:
-        assert cfg.env_name.startswith("dmc_")
+    elif cfg.env_name.startswith("dmc_"):
         env = dmc.make(cfg)
 
         if cfg.pixels:
@@ -256,6 +255,18 @@ def make_norm_env(cfg):
 
             def set_seed(seed):
                 return env.env._env.task.random.seed(seed)
+
+    else:
+        env = gym.make(cfg.env_name)
+
+        def render(mode, height, width, camera_id):
+            frame = env.env.render(mode="rgb_array")
+            return frame
+
+        env.render = render
+
+        def set_seed(seed):
+            return env.seed(seed)
 
     env.set_seed = set_seed
 
@@ -557,6 +568,19 @@ class Overrides(object):
         for k, v in self.kvs.items():
             cmd.append(f"{k}={v}")
         return cmd
+
+
+class freeze_env_v1(object):
+    def __init__(self, env):
+        self._env = env
+
+    def __enter__(self):
+        self._init_state = self._env.env.env.state.copy()
+        self._elapsed_steps = self._env._elapsed_steps
+
+    def __exit__(self, *args):
+        self._env.env.env.state = self._init_state
+        self._env._elapsed_steps = self._elapsed_steps
 
 
 class freeze_env(object):
