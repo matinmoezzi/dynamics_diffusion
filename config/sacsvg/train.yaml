@@ -20,7 +20,7 @@ sweep:
 replay_buffer_capacity: min(${num_train_steps}, 1e6)
 # replay_buffer_capacity: ${num_train_steps}
 
-num_seed_steps: 1000
+num_seed_steps: 500
 
 eval_freq: ??? # Over-ridden by env
 num_eval_episodes: 10
@@ -84,7 +84,7 @@ agent:
   full_target_mve: False
 
   discount: 0.99
-  seq_batch_size: 512
+  seq_batch_size: 256
   step_batch_size: 1024
   horizon: 3
   seq_train_length: ${agent.horizon}
