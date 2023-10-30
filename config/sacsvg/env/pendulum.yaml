@@ -1,6 +1,6 @@
 # @package _global_
 env_name: Pendulum-v1
-num_train_steps: 5000
+num_train_steps: 10000
 eval_freq: 1000
 # replay_buffer_capacity: 1e6
 
@@ -12,4 +12,4 @@ learn_temp:
 
 agent:
   horizon: 3
-  warmup_steps: 500
+  warmup_steps: 1000

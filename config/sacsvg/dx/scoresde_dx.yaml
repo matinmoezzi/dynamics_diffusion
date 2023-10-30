@@ -8,14 +8,14 @@ obs_dim: ${..obs_dim}
 action_dim: ${..action_dim}
 horizon: ${..agent.horizon}
 detach_xt: true
-clip_grad_norm: null
+clip_grad_norm: 1.0
 opt_name: "Adam"
-lr: 1e-3
+lr: 1e-4
 ema_rate: "0.9999"  # comma-separated list of EMA values
 use_fp16: false
 fp16_scale_growth: 1e-3
 
-sde_continuous: true
+sde_continuous: false
 sde_likelihood_weighting: false
 sde_eps: 1e-8
 
