@@ -616,7 +616,7 @@ class CMDx(DiffusionDx):
                         self.ddp_model,
                         x0,
                         num_scales,
-                        target_model=self.target_model,
+                        target_model=self.teacher_model,
                         target_diffusion=self.teacher_diffusion,
                         model_kwargs=model_kwargs,
                     )
