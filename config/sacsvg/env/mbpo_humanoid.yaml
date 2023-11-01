@@ -1,7 +1,7 @@
 # @package _global_
 env_name: mbpo_humanoid
 num_train_steps: 2e3
-eval_freq: 50000
+eval_freq: 25000
 # replay_buffer_capacity: 1e6
 
 # Environment-specific overrides:
@@ -12,4 +12,4 @@ learn_temp:
 
 agent:
   horizon: 3
-  warmup_steps: 1000
+  warmup_steps: 5000
