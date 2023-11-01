@@ -4,13 +4,13 @@
 from pathlib import Path
 import numpy as np
 from omegaconf import OmegaConf
+import torch.distributed as dist
 import torch
 import copy
 import os
 import sys
 import shutil
 import time
-import pickle as pkl
 
 from setproctitle import setproctitle
 from tqdm import trange
@@ -24,10 +24,9 @@ setproctitle("sacsvg")
 
 import hydra
 
-from sacsvg import sweeper
 
 from sacsvg.video import VideoRecorder
-from sacsvg import agent, utils, temp, dx, actor, critic
+from sacsvg import utils
 from sacsvg.replay_buffer import ReplayBuffer
 from hydra.core.hydra_config import HydraConfig
 
@@ -74,6 +73,8 @@ class Workspace(object):
         self.best_eval_rew = None
 
     def evaluate(self):
+        if dist_util.DistUtil.get_local_rank() != 0:
+            return
         episode_rewards = []
         for episode in range(self.cfg.num_eval_episodes):
             if self.cfg.fixed_eval:
@@ -215,6 +216,7 @@ class Workspace(object):
         if dist_util.DistUtil.get_local_rank() == 0:
             path = os.path.join(self.work_dir, f"{tag}.pt")
             torch.save(self, path)
+        dist.barrier()
 
     @staticmethod
     def load(path):
