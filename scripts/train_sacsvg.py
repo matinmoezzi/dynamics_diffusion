@@ -216,7 +216,6 @@ class Workspace(object):
         if dist_util.DistUtil.get_local_rank() == 0:
             path = os.path.join(self.work_dir, f"{tag}.pt")
             torch.save(self, path)
-        dist.barrier()
 
     @staticmethod
     def load(path):
