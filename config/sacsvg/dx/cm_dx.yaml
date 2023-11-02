@@ -12,7 +12,7 @@ detach_xt: true
 clip_grad_norm: null
 
 teacher_model_path: ""
-training_mode: "consistency_distillation"
+training_mode: "consistency_training"
 target_ema_mode: "fixed"
 scale_mode: "fixed"
 start_ema: 0.0

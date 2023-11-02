@@ -603,7 +603,7 @@ class CMDx(DiffusionDx):
                 batch_size, dist_util.DistUtil.dev()
             )
 
-            ema, num_scales = self.ema_scale_fn(1)
+            ema, num_scales = self.ema_scale_fn(step)
             x0 = obs[horizon + 1] - obs[horizon]
             model_kwargs = {"state": obs[horizon], "action": action[horizon]}
             if self.training_mode == "progdist":
@@ -674,7 +674,7 @@ class CMDx(DiffusionDx):
             ema.update(self.model.parameters())
 
         if self.target_model:
-            self._update_target_ema()
+            self._update_target_ema(step)
         if self.training_mode == "progdist":
             self.reset_training_for_progdist()
 
@@ -687,8 +687,8 @@ class CMDx(DiffusionDx):
 
         return torch.stack(diffusion_losses).mean().item()
 
-    def _update_target_ema(self):
-        target_ema, scales = self.ema_scale_fn(1)
+    def _update_target_ema(self, step):
+        target_ema, scales = self.ema_scale_fn(step)
         with torch.no_grad():
             update_ema(
                 self.target_model.parameters(),
