@@ -1,7 +1,7 @@
 defaults:
   - _self_
-  - env: pendulum
-  - dx: scoresde_dx
+  - env: mbpo_ant
+  - dx: ddpm_dx
   # - hydra/sweeper: svg
   # - hydra/launcher: submitit_slurm
 

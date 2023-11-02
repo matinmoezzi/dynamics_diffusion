@@ -118,16 +118,13 @@ class DiffusionDx(nn.Module):
 
         if dist_util.DistUtil.device == "cpu":
             self.use_ddp = True
-            self.ddp_model = DDP(
-                self.model,
-            )
+            self.ddp_model = DDP(self.model)
             self.model = self.ddp_model
 
         elif torch.cuda.is_available():
             self.use_ddp = True
             self.ddp_model = DDP(
-                self.model,
-                device_ids=[dist_util.DistUtil.dev()],
+                self.model, device_ids=[dist_util.DistUtil.get_local_rank()]
             )
             self.model = self.ddp_model
         else:
