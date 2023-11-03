@@ -41,11 +41,13 @@ class MLP(nn.Module):
 
         input_dim = x_dim + cond_dim + t_dim
         self.mid_layer = nn.Sequential(
-            nn.Linear(input_dim, 256),
+            nn.Linear(input_dim, 512),
             nn.Mish(),
-            nn.Linear(256, 256),
+            nn.Linear(512, 512),
             nn.Mish(),
-            nn.Linear(256, 256),
+            nn.Linear(512, 512),
+            nn.Mish(),
+            nn.Linear(512, 512),
             nn.Mish(),
         )
 
@@ -54,7 +56,7 @@ class MLP(nn.Module):
         else:
             out_dim = x_dim
 
-        self.final_layer = nn.Linear(256, out_dim)
+        self.final_layer = nn.Linear(512, out_dim)
 
     def forward(self, x, time, state, action):
         state = state.type(self.dtype)
