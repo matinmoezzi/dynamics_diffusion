@@ -147,7 +147,7 @@ class Workspace(object):
                         self.best_eval_rew = eval_rew
 
                     self.replay_buffer.save_data(self.replay_dir)
-                    self.save(tag="latest")
+                    self.save(tag="eval_latest")
 
                 if (
                     self.step > 0
@@ -155,7 +155,7 @@ class Workspace(object):
                     and self.steps_since_save >= self.cfg.save_freq
                 ):
                     tag = str(self.step).zfill(self.cfg.save_zfill)
-                    self.save(tag=tag)
+                    self.save(tag="latest")
                     self.steps_since_save = 0
 
                 if self.cfg.num_initial_states is not None:
