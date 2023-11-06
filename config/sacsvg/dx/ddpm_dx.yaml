@@ -20,3 +20,4 @@ clip_denoised: false
 schedule_sampler: "uniform"
 
 progress: False
+abs_pos: False

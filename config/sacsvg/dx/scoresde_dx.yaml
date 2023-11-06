@@ -28,3 +28,5 @@ sde_sampler:
   predictor: 'reverse_diffusion'
   corrector: 'langevin'
   continuous: True
+
+abs_pos: False

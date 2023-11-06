@@ -13,3 +13,5 @@ rec_type: GRU
 rec_latent_dim: 512
 rec_num_layers: 2
 lr: 1e-3
+
+abs_pos: False
