@@ -73,6 +73,7 @@ class DiffusionDx(nn.Module):
         use_fp16,
         ema_rate,
         fp16_scale_growth,
+        abs_pos=False,
     ):
         super().__init__()
 
@@ -86,6 +87,7 @@ class DiffusionDx(nn.Module):
         self.opt_name = opt_name
         self.diffusion = diffusion
         self.use_fp16 = use_fp16
+        self.abs_pos = abs_pos
 
         if isinstance(model, torch.nn.Module):
             self.model = model
@@ -509,8 +511,11 @@ class CMDx(DiffusionDx):
             )
             dx_sample = sample_fn_wrapper(model_kwargs={"state": xt, "action": ut})
 
-            # Assume that s_{t+1} = s_t + dx_t
-            xtp1 = xt + dx_sample
+            if self.abs_pos:
+                xtp1 = dx_sample
+            else:
+                # Assume that s_{t+1} = s_t + dx_t
+                xtp1 = xt + dx_sample
 
             if self.freeze_dims is not None:
                 xtp1[:, self.freeze_dims] = obs_frozen
@@ -579,8 +584,11 @@ class CMDx(DiffusionDx):
             )
             dx_sample = sample_fn_wrapper(model_kwargs={"state": xt, "action": ut})
 
-            # Assume that s_{t+1} = s_t + dx_t
-            xtp1 = xt + dx_sample
+            if self.abs_pos:
+                xtp1 = dx_sample
+            else:
+                # Assume that s_{t+1} = s_t + dx_t
+                xtp1 = xt + dx_sample
 
             if self.freeze_dims is not None:
                 xtp1[:, self.freeze_dims] = obs_frozen
@@ -604,7 +612,12 @@ class CMDx(DiffusionDx):
             )
 
             ema, num_scales = self.ema_scale_fn(step)
-            x0 = obs[horizon + 1] - obs[horizon]
+
+            if self.abs_pos:
+                x0 = obs[horizon + 1]
+            else:
+                x0 = obs[horizon + 1] - obs[horizon]
+
             model_kwargs = {"state": obs[horizon], "action": action[horizon]}
             if self.training_mode == "progdist":
                 if num_scales == self.ema_scale_fn(0)[1]:

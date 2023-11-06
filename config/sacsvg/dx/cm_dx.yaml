@@ -40,3 +40,5 @@ steps: 40
 seed: 42
 ts: ""
 clip_denoised: False
+
+abs_pos: True
