@@ -260,6 +260,14 @@ def get_runtime_choice(key):
     return instance.runtime.choices[f"{key}@trainer.{key}"]
 
 
+# Custom resolver that acts like a simple if-else statement
+def if_resolver(condition, true_val, false_val):
+    return true_val if condition else false_val
+
+
+# Registering the custom resolver with the name 'if_else'
+OmegaConf.register_new_resolver("if_else", if_resolver, replace=True)
+
 OmegaConf.register_new_resolver(
     "karras_distillation", karras_distillation, replace=True
 )

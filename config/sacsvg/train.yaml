@@ -137,7 +137,7 @@ hydra:
   searchpath:
     - file://config
   run:
-    dir: ./logs/sacsvg/${env_name}/${hydra:runtime.choices.dx}/${device}${oc.decode:${oc.env:WORLD_SIZE,1}}_${human_readable_steps:${num_train_steps}}_H${agent.horizon}_${now:%Y%m%d-%H%M%S}
+    dir: ./logs/sacsvg/${env_name}/${hydra:runtime.choices.dx}/${device}${oc.decode:${oc.env:WORLD_SIZE,1}}_${human_readable_steps:${num_train_steps}}_H${agent.horizon}${if_else:${agent.dx.abs_pos},_abspos_,_}${now:%Y%m%d-%H%M%S}
   sweep:
     dir: ./exp/${now:%Y.%m.%d}/${now:%H%M}_${experiment}
     subdir: ${hydra.job.num}
