@@ -26,7 +26,7 @@ class SeqNN(nn.Module):
         x_dec_hidden_depth,
         rec_type,
         rec_latent_dim,
-        rec_num_layers,
+        rec_num_layers
     ):
         super().__init__()
 
@@ -217,6 +217,7 @@ class SeqDx(nn.Module):
         rec_latent_dim,
         rec_num_layers,
         lr,
+        abs_pos=False
     ):
         super().__init__()
 
