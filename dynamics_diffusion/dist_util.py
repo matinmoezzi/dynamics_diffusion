@@ -93,3 +93,12 @@ class DistUtil:
         if not dist.is_initialized():
             return 0
         return int(os.environ["RANK"])
+
+
+def sync_params(params):
+    """
+    Synchronize a sequence of Tensors across ranks from rank 0.
+    """
+    for p in params:
+        with th.no_grad():
+            dist.broadcast(p, 0)

@@ -26,7 +26,7 @@ lr_anneal_steps: 0
 ema_rate: "0.9999"  # comma-separated list of EMA values
 opt_name: "AdamW"
 weight_decay: 0.0
-use_fp16: False
+use_fp16: True
 total_training_steps: ${..num_train_steps}
 fp16_scale_growth: 1e-3
 
@@ -42,3 +42,5 @@ ts: ""
 clip_denoised: False
 
 abs_pos: False
+
+num_samples: 10000

@@ -12,7 +12,7 @@ clip_grad_norm: 1.0
 opt_name: "Adam"
 lr: 1e-4
 ema_rate: "0.9999"  # comma-separated list of EMA values
-use_fp16: false
+use_fp16: true
 fp16_scale_growth: 1e-3
 
 sde_continuous: false
@@ -30,3 +30,4 @@ sde_sampler:
   continuous: True
 
 abs_pos: False
+weight_decay: 0.0

@@ -24,9 +24,15 @@ from dynamics_diffusion.script_util import create_ema_and_scales_fn
 from dynamics_diffusion.sde import VESDE, VPSDE, subVPSDE
 from dynamics_diffusion.sde_models.ema import ExponentialMovingAverage
 from dynamics_diffusion.train_util import _expand_tensor_shape
+from sacsvg.fp16_util import (
+    MixedPrecisionTrainer,
+    get_param_groups_and_shapes,
+    make_master_params,
+    master_params_to_model_params,
+)
 
 
-def get_opt(optimizer_name, model_params, lr=0.001):
+def get_opt(optimizer_name, model_params, lr=0.001, weight_decay=0.0):
     """
     Instantiate a torch optimizer based on the optimizer name and model parameters.
 
@@ -42,11 +48,11 @@ def get_opt(optimizer_name, model_params, lr=0.001):
     ValueError: If the optimizer_name is not recognized.
     """
     optimizers = {
-        "Adam": Adam(model_params, lr=lr),
-        "AdamW": AdamW(model_params, lr=lr),
-        "RAdam": RAdam(model_params, lr=lr),
-        "SGD": SGD(model_params, lr=lr),
-        "RMSprop": RMSprop(model_params, lr=lr),
+        "Adam": Adam(model_params, lr=lr, weight_decay=weight_decay),
+        "AdamW": AdamW(model_params, lr=lr, weight_decay=weight_decay),
+        "RAdam": RAdam(model_params, lr=lr, weight_decay=weight_decay),
+        "SGD": SGD(model_params, lr=lr, weight_decay=weight_decay),
+        "RMSprop": RMSprop(model_params, lr=lr, weight_decay=weight_decay),
     }
 
     if optimizer_name in optimizers:
@@ -73,6 +79,7 @@ class DiffusionDx(nn.Module):
         use_fp16,
         ema_rate,
         fp16_scale_growth,
+        weight_decay,
         abs_pos=False,
     ):
         super().__init__()
@@ -87,7 +94,9 @@ class DiffusionDx(nn.Module):
         self.opt_name = opt_name
         self.diffusion = diffusion
         self.use_fp16 = use_fp16
+        self.fp16_scale_growth = fp16_scale_growth
         self.abs_pos = abs_pos
+        self.weight_decay = weight_decay
 
         if isinstance(model, torch.nn.Module):
             self.model = model
@@ -99,14 +108,24 @@ class DiffusionDx(nn.Module):
         else:
             raise ValueError(f"Unknown model {model}")
         self.model = self.model.to(dist_util.DistUtil.dev())
+        self.model.train()
+        if use_fp16:
+            self.model.convert_to_fp16()
+
+        self.mp_trainer = MixedPrecisionTrainer(
+            model=self.model,
+            use_fp16=self.use_fp16,
+            fp16_scale_growth=fp16_scale_growth,
+        )
 
         self.ema_rate = (
             [ema_rate]
             if isinstance(ema_rate, float)
             else [float(x) for x in ema_rate.split(",")]
         )
+
         self.ema = [
-            ExponentialMovingAverage(self.model.parameters(), decay=rate)
+            ExponentialMovingAverage(self.mp_trainer.master_params, decay=rate)
             for rate in range(len(self.ema_rate))
         ]
 
@@ -120,15 +139,25 @@ class DiffusionDx(nn.Module):
 
         if dist_util.DistUtil.device == "cpu":
             self.use_ddp = True
-            self.ddp_model = DDP(self.model)
-            self.model = self.ddp_model
+            self.ddp_model = DDP(
+                self.model,
+                device_ids=None,
+                output_device=None,
+                broadcast_buffers=False,
+                bucket_cap_mb=128,
+                find_unused_parameters=False,
+            )
 
         elif torch.cuda.is_available():
             self.use_ddp = True
             self.ddp_model = DDP(
-                self.model, device_ids=[dist_util.DistUtil.get_local_rank()]
+                self.model,
+                device_ids=[dist_util.DistUtil.dev()],
+                output_device=dist_util.DistUtil.dev(),
+                broadcast_buffers=False,
+                bucket_cap_mb=128,
+                find_unused_parameters=False,
             )
-            self.model = self.ddp_model
         else:
             if dist.get_world_size() > 1:
                 logger.warn(
@@ -138,7 +167,12 @@ class DiffusionDx(nn.Module):
             self.use_ddp = False
             self.ddp_model = self.model
 
-        self.opt = get_opt(self.opt_name, list(self.model.parameters()), lr=lr)
+        self.opt = get_opt(
+            self.opt_name,
+            self.mp_trainer.master_params,
+            lr=lr,
+            weight_decay=weight_decay,
+        )
 
     def forward(self, x, us):
         return self.unroll(x, us)
@@ -163,10 +197,12 @@ class DDPMDx(DiffusionDx):
         super().__init__(**kwargs)
         self.use_ddim = use_ddim
         self.clip_denoised = clip_denoised
-        schedule_sampler = schedule_sampler or UniformSampler(self.diffusion)
-        self.schedule_sampler = create_named_schedule_sampler(
+
+        schedule_sampler = create_named_schedule_sampler(
             schedule_sampler, self.diffusion
         )
+        self.schedule_sampler = schedule_sampler or UniformSampler(self.diffusion)
+
         self.progress = progress
 
     def unroll_policy(self, init_x, policy, sample=True, last_u=True, detach_xt=False):
@@ -208,8 +244,11 @@ class DDPMDx(DiffusionDx):
             )
             dx_sample = sample_fn_wrapper(model_kwargs={"state": xt, "action": ut})
 
-            # Assume that s_{t+1} = s_t + dx_t
-            xtp1 = xt + dx_sample
+            if self.abs_pos:
+                xtp1 = dx_sample
+            else:
+                # Assume that s_{t+1} = s_t + dx_t
+                xtp1 = xt + dx_sample
 
             if self.freeze_dims is not None:
                 xtp1[:, self.freeze_dims] = obs_frozen
@@ -266,8 +305,11 @@ class DDPMDx(DiffusionDx):
                 model_kwargs={"state": xt, "action": ut},
             )
 
-            # Assume that s_{t+1} = s_t + dx_t
-            xtp1 = xt + dx_sample
+            if self.abs_pos:
+                xtp1 = dx_sample
+            else:
+                # Assume that s_{t+1} = s_t + dx_t
+                xtp1 = xt + dx_sample
 
             if self.freeze_dims is not None:
                 xtp1[:, self.freeze_dims] = obs_frozen
@@ -283,21 +325,32 @@ class DDPMDx(DiffusionDx):
         assert obs.dim() == 3
         T, batch_size, _ = obs.shape
 
-        self.opt.zero_grad()
         diffusion_losses = []
         for horizon in range(T - 1):
+            self.mp_trainer.zero_grad()
+
             t, weights = self.schedule_sampler.sample(
                 batch_size, dist_util.DistUtil.dev()
             )
 
+            if self.abs_pos:
+                x0 = obs[horizon + 1]
+            else:
+                x0 = obs[horizon + 1] - obs[horizon]
+
             compute_losses = functools.partial(
                 self.diffusion.training_losses,
                 self.ddp_model,
-                obs[horizon + 1] - obs[horizon],
+                x0,
                 t,
                 model_kwargs={"state": obs[horizon], "action": action[horizon]},
             )
-            losses = compute_losses()
+
+            if self.use_ddp:
+                with self.ddp_model.no_sync():
+                    losses = compute_losses()
+            else:
+                losses = compute_losses()
 
             if isinstance(self.schedule_sampler, LossAwareSampler):
                 self.schedule_sampler.update_with_local_losses(
@@ -305,19 +358,15 @@ class DDPMDx(DiffusionDx):
                 )
             loss = (losses["loss"] * weights).mean()
 
-            diffusion_losses.append(loss)
+            diffusion_losses.append(losses["loss"])
 
-            loss.backward()
+            self.mp_trainer.backward(loss)
 
-        if self.clip_grad_norm is not None:
-            assert len(self.opt.param_groups) == 1
-            params = self.opt.param_groups[0]["params"]
-            torch.nn.utils.clip_grad_norm_(params, self.clip_grad_norm)
+            took_step = self.mp_trainer.optimize(self.opt, step)
 
-        self.opt.step()
-
-        for ema in self.ema:
-            ema.update(self.model.parameters())
+            if took_step:
+                for ema in self.ema:
+                    ema.update(self.mp_trainer.master_params)
 
         step_diffusion_loss = torch.stack(diffusion_losses).mean().item()
 
@@ -348,9 +397,9 @@ class CMDx(DiffusionDx):
         teacher_model_path,
         lr_anneal_steps,
         schedule_sampler,
-        weight_decay,
         total_training_steps,
         clip_denoised,
+        num_samples,
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -363,6 +412,7 @@ class CMDx(DiffusionDx):
         self.steps = steps
         self.seed = seed
         self.ts = ts
+        self.num_samples = num_samples
 
         self.target_ema_mode = target_ema_mode
         self.start_ema = start_ema
@@ -373,13 +423,14 @@ class CMDx(DiffusionDx):
         self.total_training_steps = total_training_steps
 
         self.training_mode = training_mode
-        self.weight_decay = weight_decay
         self.clip_denoised = clip_denoised
         self.lr_anneal_steps = lr_anneal_steps
-        schedule_sampler = schedule_sampler or UniformSampler(self.diffusion)
-        self.schedule_sampler = create_named_schedule_sampler(
+
+        schedule_sampler = create_named_schedule_sampler(
             schedule_sampler, self.diffusion
         )
+
+        self.schedule_sampler = schedule_sampler or UniformSampler(self.diffusion)
 
         self.ema_scale_fn = create_ema_and_scales_fn(
             target_ema_mode=target_ema_mode,
@@ -403,15 +454,22 @@ class CMDx(DiffusionDx):
             self.teacher_diffusion = copy.deepcopy(self.diffusion)
             self.teacher_diffusion.distillation = False
 
+            for dst, src in zip(
+                self.model.parameters(), self.teacher_model.parameters()
+            ):
+                dst.data.copy_(src.data)
+
             self.teacher_model.to(dist_util.DistUtil.dev())
             self.teacher_model.eval()
+            if self.use_fp16:
+                self.teacher_model.convert_to_fp16()
 
         else:
             self.teacher_model = None
             self.teacher_diffusion = None
 
         # load the target model for distillation, if path specified.
-
+        logger.log("creating the target model")
         if hasattr(self.model, "module"):
             self.target_model = copy.deepcopy(self.model.module)
         else:
@@ -420,9 +478,25 @@ class CMDx(DiffusionDx):
         self.target_model.to(dist_util.DistUtil.dev())
         self.target_model.train()
 
+        dist_util.sync_params(self.target_model.parameters())
+        dist_util.sync_params(self.target_model.buffers())
+
+        for dst, src in zip(self.target_model.parameters(), self.model.parameters()):
+            dst.data.copy_(src.data)
+
+        if self.use_fp16:
+            self.target_model.convert_to_fp16()
+
         if self.target_model:
             self.target_model.requires_grad_(False)
             self.target_model.train()
+
+            self.target_model_param_groups_and_shapes = get_param_groups_and_shapes(
+                self.target_model.named_parameters()
+            )
+            self.target_model_master_params = make_master_params(
+                self.target_model_param_groups_and_shapes
+            )
 
         if self.teacher_model:
             self.teacher_model.requires_grad_(False)
@@ -489,10 +563,9 @@ class CMDx(DiffusionDx):
                 ts = tuple(int(x) for x in self.ts.split(","))
             else:
                 ts = None
-            generator = get_generator(self.generator, 1, self.seed)
+            generator = get_generator(self.generator, self.num_samples, self.seed)
 
-            sample_fn_wrapper = functools.partial(
-                karras_sample,
+            dx_sample = karras_sample(
                 self.diffusion,
                 self.model,
                 (n_batch, self.obs_dim),
@@ -508,8 +581,8 @@ class CMDx(DiffusionDx):
                 s_noise=self.s_noise,
                 generator=generator,
                 ts=ts,
+                model_kwargs={"state": xt, "action": ut},
             )
-            dx_sample = sample_fn_wrapper(model_kwargs={"state": xt, "action": ut})
 
             if self.abs_pos:
                 xtp1 = dx_sample
@@ -563,9 +636,10 @@ class CMDx(DiffusionDx):
                 ts = tuple(int(x) for x in self.ts.split(","))
             else:
                 ts = None
-            generator = get_generator(self.generator, 1, self.seed)
-            sample_fn_wrapper = functools.partial(
-                karras_sample,
+
+            generator = get_generator(self.generator, self.num_samples, self.seed)
+
+            dx_sample = karras_sample(
                 self.diffusion,
                 self.model,
                 (n_batch, self.obs_dim),
@@ -581,8 +655,8 @@ class CMDx(DiffusionDx):
                 s_noise=self.s_noise,
                 generator=generator,
                 ts=ts,
+                model_kwargs={"state": xt, "action": ut},
             )
-            dx_sample = sample_fn_wrapper(model_kwargs={"state": xt, "action": ut})
 
             if self.abs_pos:
                 xtp1 = dx_sample
@@ -604,14 +678,14 @@ class CMDx(DiffusionDx):
         assert obs.dim() == 3
         T, batch_size, _ = obs.shape
 
-        self.opt.zero_grad()
         diffusion_losses = []
         for horizon in range(T - 1):
+            self.mp_trainer.zero_grad()
             t, weights = self.schedule_sampler.sample(
                 batch_size, dist_util.DistUtil.dev()
             )
 
-            ema, num_scales = self.ema_scale_fn(step)
+            ema, num_scales = self.ema_scale_fn(self.step)
 
             if self.abs_pos:
                 x0 = obs[horizon + 1]
@@ -663,7 +737,11 @@ class CMDx(DiffusionDx):
             else:
                 raise ValueError(f"Unknown training mode {self.training_mode}")
 
-            losses = compute_losses()
+            if self.use_ddp:
+                with self.ddp_model.no_sync():
+                    losses = compute_losses()
+            else:
+                losses = compute_losses()
 
             if isinstance(self.schedule_sampler, LossAwareSampler):
                 self.schedule_sampler.update_with_local_losses(
@@ -672,27 +750,24 @@ class CMDx(DiffusionDx):
 
             loss = (losses["loss"] * weights).mean()
 
-            diffusion_losses.append(loss)
+            diffusion_losses.append(losses["loss"])
 
-            loss.backward()
+            self.mp_trainer.backward(loss)
 
-        if self.clip_grad_norm is not None:
-            assert len(self.opt.param_groups) == 1
-            params = self.opt.param_groups[0]["params"]
-            torch.nn.utils.clip_grad_norm_(params, self.clip_grad_norm)
+            took_step = self.mp_trainer.optimize(self.opt, step)
 
-        self.opt.step()
+            if took_step:
+                for ema in self.ema:
+                    ema.update(self.mp_trainer.master_params)
 
-        for ema in self.ema:
-            ema.update(self.model.parameters())
+                if self.target_model:
+                    self._update_target_ema()
 
-        if self.target_model:
-            self._update_target_ema(step)
-        if self.training_mode == "progdist":
-            self.reset_training_for_progdist()
+                if self.training_mode == "progdist":
+                    self.reset_training_for_progdist()
 
-        self.global_step += 1
-        self.step += 1
+                self.global_step += 1
+                self.step += 1
 
         step_diffusion_loss = torch.stack(diffusion_losses).mean().item()
 
@@ -700,13 +775,18 @@ class CMDx(DiffusionDx):
 
         return torch.stack(diffusion_losses).mean().item()
 
-    def _update_target_ema(self, step):
-        target_ema, scales = self.ema_scale_fn(step)
+    def _update_target_ema(self):
+        target_ema, scales = self.ema_scale_fn(self.global_step)
         with torch.no_grad():
             update_ema(
                 self.target_model.parameters(),
                 self.model.parameters(),
                 rate=target_ema,
+            )
+
+            master_params_to_model_params(
+                self.target_model_param_groups_and_shapes,
+                self.target_model_master_params,
             )
 
     def reset_training_for_progdist(self):
@@ -723,12 +803,12 @@ class CMDx(DiffusionDx):
                     )
                 # reset optimizer
                 self.opt = RAdam(
-                    self.model.parameters(),
+                    self.mp_trainer.master_params,
                     lr=self.lr,
                     weight_decay=self.weight_decay,
                 )
                 self.ema = [
-                    ExponentialMovingAverage(self.model.parameters(), decay=rate)
+                    ExponentialMovingAverage(self.mp_trainer.master_params, decay=rate)
                     for rate in range(len(self.ema_rate))
                 ]
                 if scales == 2:
@@ -794,8 +874,12 @@ class ScoreSDEDx(DiffusionDx):
             model_kwargs = {"state": xt, "action": ut}
             dx_sample, n = sampling_fn(model_kwargs=model_kwargs)(self.model)
 
-            # Assume that s_{t+1} = s_t + dx_t
-            xtp1 = xt + dx_sample
+            if self.abs_pos:
+                xtp1 = dx_sample
+            else:
+                # Assume that s_{t+1} = s_t + dx_t
+                xtp1 = xt + dx_sample
+
             if self.freeze_dims is not None:
                 xtp1[:, self.freeze_dims] = obs_frozen
 
@@ -860,8 +944,11 @@ class ScoreSDEDx(DiffusionDx):
             model_kwargs = {"state": xt, "action": ut}
             dx_sample, n = sampling_fn(model_kwargs=model_kwargs)(self.model)
 
-            # Assume that s_{t+1} = s_t + dx_t
-            xtp1 = xt + dx_sample
+            if self.abs_pos:
+                xtp1 = dx_sample
+            else:
+                # Assume that s_{t+1} = s_t + dx_t
+                xtp1 = xt + dx_sample
 
             if self.freeze_dims is not None:
                 xtp1[:, self.freeze_dims] = obs_frozen
@@ -876,10 +963,16 @@ class ScoreSDEDx(DiffusionDx):
         assert obs.dim() == 3
         T, batch_size, _ = obs.shape
 
-        self.opt.zero_grad()
         diffusion_losses = []
         for horizon in range(T - 1):
+            self.mp_trainer.zero_grad()
+
             model_kwargs = {"state": obs[horizon], "action": action[horizon]}
+
+            if self.abs_pos:
+                x0 = obs[horizon + 1]
+            else:
+                x0 = obs[horizon + 1] - obs[horizon]
 
             # Score SDE Score-matching Loss
             if self.sde_continuous:
@@ -890,7 +983,7 @@ class ScoreSDEDx(DiffusionDx):
                 )
                 compute_losses = functools.partial(
                     self._continuous_loss,
-                    obs[horizon + 1] - obs[horizon],
+                    x0,
                     t,
                     model_kwargs,
                 )
@@ -907,27 +1000,28 @@ class ScoreSDEDx(DiffusionDx):
                 compute_losses = functools.partial(
                     self.diffusion.training_losses,
                     model=self.ddp_model,
-                    batch=obs[horizon + 1] - obs[horizon],
+                    batch=x0,
                     labels=t,
                     model_kwargs=model_kwargs,
                 )
 
-            losses = compute_losses()
+            if self.use_ddp:
+                with self.ddp_model.no_sync():
+                    losses = compute_losses()
+            else:
+                losses = compute_losses()
+
             loss = (losses["loss"]).mean()
 
-            diffusion_losses.append(loss)
+            diffusion_losses.append(losses["loss"])
 
-            loss.backward()
+            self.mp_trainer.backward(loss)
 
-        if self.clip_grad_norm is not None:
-            assert len(self.opt.param_groups) == 1
-            params = self.opt.param_groups[0]["params"]
-            torch.nn.utils.clip_grad_norm_(params, self.clip_grad_norm)
+            took_step = self.mp_trainer.optimize(self.opt, step)
 
-        self.opt.step()
-
-        for ema in self.ema:
-            ema.update(self.model.parameters())
+            if took_step:
+                for ema in self.ema:
+                    ema.update(self.mp_trainer.master_params)
 
         step_diffusion_loss = torch.stack(diffusion_losses).mean().item()
 
