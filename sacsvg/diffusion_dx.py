@@ -12,7 +12,6 @@ import torch.distributed as dist
 from torch.nn.parallel.distributed import DistributedDataParallel as DDP
 from dynamics_diffusion.karras_diffusion import karras_sample
 
-from dynamics_diffusion.mlp import MLP
 from dynamics_diffusion.nn import update_ema
 from dynamics_diffusion.random_util import get_generator
 from dynamics_diffusion.resample import (
@@ -30,6 +29,7 @@ from sacsvg.fp16_util import (
     make_master_params,
     master_params_to_model_params,
 )
+from sacsvg.transformer import TransformerDiffusion
 
 
 def get_opt(optimizer_name, model_params, lr=0.001, weight_decay=0.0):
@@ -97,16 +97,12 @@ class DiffusionDx(nn.Module):
         self.fp16_scale_growth = fp16_scale_growth
         self.abs_pos = abs_pos
         self.weight_decay = weight_decay
+        self.multi_step = False
+        self.model = model
 
-        if isinstance(model, torch.nn.Module):
-            self.model = model
-        elif isinstance(model, functools.partial):
-            if model.func == MLP:
-                self.model = model(
-                    x_dim=self.obs_dim, cond_dim=self.obs_dim + self.action_dim
-                )
-        else:
-            raise ValueError(f"Unknown model {model}")
+        if isinstance(self.model, TransformerDiffusion):
+            self.multi_step = True
+
         self.model = self.model.to(dist_util.DistUtil.dev())
         self.model.train()
         if use_fp16:
@@ -177,35 +173,15 @@ class DiffusionDx(nn.Module):
     def forward(self, x, us):
         return self.unroll(x, us)
 
-    def unroll(self, x, us):
+    def loss_fn(self, x0, batch_size, model_kwargs):
         raise NotImplementedError
 
-    def to(self, device):
-        super().to(device)
-        self.model.to(device)
-        if self.use_ddp:
-            self.ddp_model.to(device)
-            self.ddp_model.device = torch.device(device)
-            self.model.device = torch.device(device)
-            self.ddp_model.device_ids = [torch.device(device).index]
-            self.model.device_ids = [torch.device(device).index]
-        return self
+    def sample_fn(self, n_batch, model_kwargs):
+        raise NotImplementedError
 
-
-class DDPMDx(DiffusionDx):
-    def __init__(self, use_ddim, clip_denoised, schedule_sampler, progress, **kwargs):
-        super().__init__(**kwargs)
-        self.use_ddim = use_ddim
-        self.clip_denoised = clip_denoised
-
-        schedule_sampler = create_named_schedule_sampler(
-            schedule_sampler, self.diffusion
-        )
-        self.schedule_sampler = schedule_sampler or UniformSampler(self.diffusion)
-
-        self.progress = progress
-
-    def unroll_policy(self, init_x, policy, sample=True, last_u=True, detach_xt=False):
+    def unroll_policy_single_step(
+        self, init_x, policy, sample=True, last_u=True, detach_xt=False
+    ):
         assert init_x.dim() == 2
         n_batch = init_x.size(0)
 
@@ -228,21 +204,9 @@ class DDPMDx(DiffusionDx):
             if detach_xt:
                 xt = xt.detach()
 
-            diffusion = self.diffusion
-            sample_fn = (
-                diffusion.p_sample_loop
-                if not self.use_ddim
-                else diffusion.ddim_sample_loop
+            dx_sample = self.sample_fn(
+                n_batch, model_kwargs={"state": xt, "action": ut}
             )
-
-            sample_fn_wrapper = functools.partial(
-                sample_fn,
-                self.ddp_model,
-                (n_batch, self.obs_dim),
-                clip_denoised=self.clip_denoised,
-                progress=self.progress,
-            )
-            dx_sample = sample_fn_wrapper(model_kwargs={"state": xt, "action": ut})
 
             if self.abs_pos:
                 xtp1 = dx_sample
@@ -274,7 +238,7 @@ class DDPMDx(DiffusionDx):
 
         return us, log_p_us, pred_xs
 
-    def unroll(self, x, us, detach_xt=False):
+    def unroll_single_step(self, x, us, detach_xt=False):
         assert x.dim() == 2
         assert us.dim() == 3
         n_batch = x.size(0)
@@ -291,18 +255,8 @@ class DDPMDx(DiffusionDx):
             if detach_xt:
                 xt = xt.detach()
 
-            diffusion = self.diffusion
-            sample_fn = (
-                diffusion.p_sample_loop
-                if not self.use_ddim
-                else diffusion.ddim_sample_loop
-            )
-
-            dx_sample = sample_fn(
-                self.ddp_model,
-                (n_batch, self.obs_dim),
-                clip_denoised=self.clip_denoised,
-                model_kwargs={"state": xt, "action": ut},
+            dx_sample = self.sample_fn(
+                n_batch, model_kwargs={"state": xt, "action": ut}
             )
 
             if self.abs_pos:
@@ -321,7 +275,88 @@ class DDPMDx(DiffusionDx):
 
         return pred_xs
 
+    def unroll_multi_step(self, x, us, detach_xt=False):
+        assert x.dim() == 2
+        assert us.dim() == 3
+        n_batch = x.size(0)
+
+        if self.freeze_dims is not None:
+            obs_frozen = x[:, self.freeze_dims]
+
+        if detach_xt:
+            x = x.detach()
+
+        dx_sample = self.sample_fn(
+            n_batch, model_kwargs={"initial_state": x, "actions": us}
+        )
+
+        if self.freeze_dims is not None:
+            dx_sample[..., self.freeze_dims] = obs_frozen
+
+        return dx_sample
+
+    def unroll(self, x, us):
+        if self.multi_step:
+            return self.unroll_multi_step(x, us)
+        else:
+            return self.unroll_single_step(x, us)
+
+    def unroll_policy(self, init_x, policy, sample=True, last_u=True, detach_xt=False):
+        if self.multi_step:
+            raise ValueError("Multi-step unroll is not supported for policy unroll.")
+        else:
+            return self.unroll_policy_single_step(
+                init_x, policy, sample, last_u, detach_xt
+            )
+
     def update_step(self, obs, action, reward, step):
+        if self.multi_step:
+            return self.update_multi_step(obs, action, reward, step)
+        else:
+            return self.update_single_step(obs, action, reward, step)
+
+    def to(self, device):
+        super().to(device)
+        self.model.to(device)
+        if self.use_ddp:
+            self.ddp_model.to(device)
+            self.ddp_model.device = torch.device(device)
+            self.ddp_model.device_ids = [torch.device(device).index]
+        return self
+
+
+class DDPMDx(DiffusionDx):
+    def __init__(self, use_ddim, clip_denoised, schedule_sampler, progress, **kwargs):
+        super().__init__(**kwargs)
+        self.use_ddim = use_ddim
+        self.clip_denoised = clip_denoised
+
+        schedule_sampler = create_named_schedule_sampler(
+            schedule_sampler, self.diffusion
+        )
+        self.schedule_sampler = schedule_sampler or UniformSampler(self.diffusion)
+
+        self.progress = progress
+
+    def sample_fn(self, n_batch, model_kwargs):
+        sample_fn = (
+            self.diffusion.p_sample_loop
+            if not self.use_ddim
+            else self.diffusion.ddim_sample_loop
+        )
+
+        dx_sample = sample_fn(
+            self.ddp_model,
+            (n_batch, self.horizon, self.obs_dim)
+            if self.multi_step
+            else (n_batch, self.obs_dim),
+            clip_denoised=self.clip_denoised,
+            progress=self.progress,
+            model_kwargs=model_kwargs,
+        )
+        return dx_sample
+
+    def update_single_step(self, obs, action, reward, step):
         assert obs.dim() == 3
         T, batch_size, _ = obs.shape
 
@@ -346,11 +381,7 @@ class DDPMDx(DiffusionDx):
                 model_kwargs={"state": obs[horizon], "action": action[horizon]},
             )
 
-            if self.use_ddp:
-                with self.ddp_model.no_sync():
-                    losses = compute_losses()
-            else:
-                losses = compute_losses()
+            losses = compute_losses()
 
             if isinstance(self.schedule_sampler, LossAwareSampler):
                 self.schedule_sampler.update_with_local_losses(
@@ -367,6 +398,51 @@ class DDPMDx(DiffusionDx):
             if took_step:
                 for ema in self.ema:
                     ema.update(self.mp_trainer.master_params)
+
+        step_diffusion_loss = torch.stack(diffusion_losses).mean().item()
+
+        logger.logkv_mean("train_diffusion/loss", step_diffusion_loss, step)
+
+        return torch.stack(diffusion_losses).mean().item()
+
+    def update_multi_step(self, obs, action, reward, step):
+        assert obs.dim() == 3
+        T, batch_size, _ = obs.shape
+
+        diffusion_losses = []
+        self.mp_trainer.zero_grad()
+
+        t, weights = self.schedule_sampler.sample(batch_size, dist_util.DistUtil.dev())
+
+        # Convert from (T, B, obs_dim) to (B, T, obs_dim)
+        obs = obs.permute(1, 0, 2)
+        action = action.permute(1, 0, 2)
+
+        x0 = obs
+
+        compute_losses = functools.partial(
+            self.diffusion.training_losses,
+            self.ddp_model,
+            x0,
+            t,
+            model_kwargs={"initial_state": obs[:, 0, :], "actions": action},
+        )
+
+        losses = compute_losses()
+
+        if isinstance(self.schedule_sampler, LossAwareSampler):
+            self.schedule_sampler.update_with_local_losses(t, losses["loss"].detach())
+        loss = (losses["loss"] * weights).mean()
+
+        diffusion_losses.append(losses["loss"])
+
+        self.mp_trainer.backward(loss)
+
+        took_step = self.mp_trainer.optimize(self.opt, step)
+
+        if took_step:
+            for ema in self.ema:
+                ema.update(self.mp_trainer.master_params)
 
         step_diffusion_loss = torch.stack(diffusion_losses).mean().item()
 
@@ -535,146 +611,78 @@ class CMDx(DiffusionDx):
             distill_steps_per_iter=self.distill_steps_per_iter,
         )
 
-    def unroll_policy(self, init_x, policy, sample=True, last_u=True, detach_xt=False):
-        assert init_x.dim() == 2
-        n_batch = init_x.size(0)
-
-        if self.freeze_dims is not None:
-            obs_frozen = init_x[:, self.freeze_dims]
-
-        pred_xs = []
-        us = []
-        log_p_us = []
-        xt = init_x
-        for t in range(self.horizon - 1):
-            policy_kwargs = {}
-            if sample:
-                _, ut, log_p_ut = policy(xt, **policy_kwargs)
-            else:
-                ut, _, log_p_ut = policy(xt, **policy_kwargs)
-            us.append(ut)
-            log_p_us.append(log_p_ut)
-
-            if detach_xt:
-                xt = xt.detach()
-
-            if self.sampler == "multistep":
-                assert len(self.ts) > 0
-                ts = tuple(int(x) for x in self.ts.split(","))
-            else:
-                ts = None
-            generator = get_generator(self.generator, self.num_samples, self.seed)
-
-            dx_sample = karras_sample(
-                self.diffusion,
-                self.model,
-                (n_batch, self.obs_dim),
-                steps=self.steps,
-                device=dist_util.DistUtil.dev(),
-                clip_denoised=self.clip_denoised,
-                sampler=self.sampler,
-                sigma_min=self.diffusion.sigma_min,
-                sigma_max=self.diffusion.sigma_max,
-                s_churn=self.s_churn,
-                s_tmin=self.s_tmin,
-                s_tmax=self.s_tmax,
-                s_noise=self.s_noise,
-                generator=generator,
-                ts=ts,
-                model_kwargs={"state": xt, "action": ut},
-            )
-
-            if self.abs_pos:
-                xtp1 = dx_sample
-            else:
-                # Assume that s_{t+1} = s_t + dx_t
-                xtp1 = xt + dx_sample
-
-            if self.freeze_dims is not None:
-                xtp1[:, self.freeze_dims] = obs_frozen
-
-            pred_xs.append(xtp1)
-            xt = xtp1
-
-        if last_u:
-            policy_kwargs = {}
-            if sample:
-                _, ut, log_p_ut = policy(xt, **policy_kwargs)
-            else:
-                ut, _, log_p_ut = policy(xt, **policy_kwargs)
-            us.append(ut)
-            log_p_us.append(log_p_ut)
-
-        us = torch.stack(us)
-        log_p_us = torch.stack(log_p_us).squeeze(2)
-        if self.horizon <= 1:
-            pred_xs = torch.empty(0, n_batch, self.obs_dim).to(init_x.device)
+    def sample_fn(self, n_batch, model_kwargs):
+        if self.sampler == "multistep":
+            assert len(self.ts) > 0
+            ts = tuple(int(x) for x in self.ts.split(","))
         else:
-            pred_xs = torch.stack(pred_xs)
+            ts = None
+        generator = get_generator(self.generator, self.num_samples, self.seed)
 
-        return us, log_p_us, pred_xs
+        dx_sample = karras_sample(
+            self.diffusion,
+            self.model,
+            (n_batch, self.horizon, self.obs_dim)
+            if self.multi_step
+            else (n_batch, self.obs_dim),
+            steps=self.steps,
+            device=dist_util.DistUtil.dev(),
+            clip_denoised=self.clip_denoised,
+            sampler=self.sampler,
+            sigma_min=self.diffusion.sigma_min,
+            sigma_max=self.diffusion.sigma_max,
+            s_churn=self.s_churn,
+            s_tmin=self.s_tmin,
+            s_tmax=self.s_tmax,
+            s_noise=self.s_noise,
+            generator=generator,
+            ts=ts,
+            model_kwargs=model_kwargs,
+        )
+        return dx_sample
 
-    def unroll(self, x, us, detach_xt=False):
-        assert x.dim() == 2
-        assert us.dim() == 3
-        n_batch = x.size(0)
-        assert us.size(1) == n_batch
-
-        if self.freeze_dims is not None:
-            obs_frozen = x[:, self.freeze_dims]
-
-        pred_xs = []
-        xt = x
-        for t in range(us.size(0)):
-            ut = us[t]
-
-            if detach_xt:
-                xt = xt.detach()
-
-            if self.sampler == "multistep":
-                assert len(self.ts) > 0
-                ts = tuple(int(x) for x in self.ts.split(","))
-            else:
-                ts = None
-
-            generator = get_generator(self.generator, self.num_samples, self.seed)
-
-            dx_sample = karras_sample(
-                self.diffusion,
-                self.model,
-                (n_batch, self.obs_dim),
-                steps=self.steps,
-                device=dist_util.DistUtil.dev(),
-                clip_denoised=self.clip_denoised,
-                sampler=self.sampler,
-                sigma_min=self.diffusion.sigma_min,
-                sigma_max=self.diffusion.sigma_max,
-                s_churn=self.s_churn,
-                s_tmin=self.s_tmin,
-                s_tmax=self.s_tmax,
-                s_noise=self.s_noise,
-                generator=generator,
-                ts=ts,
-                model_kwargs={"state": xt, "action": ut},
+    def _update_target_ema(self):
+        target_ema, scales = self.ema_scale_fn(self.global_step)
+        with torch.no_grad():
+            update_ema(
+                self.target_model.parameters(),
+                self.model.parameters(),
+                rate=target_ema,
             )
 
-            if self.abs_pos:
-                xtp1 = dx_sample
-            else:
-                # Assume that s_{t+1} = s_t + dx_t
-                xtp1 = xt + dx_sample
+            master_params_to_model_params(
+                self.target_model_param_groups_and_shapes,
+                self.target_model_master_params,
+            )
 
-            if self.freeze_dims is not None:
-                xtp1[:, self.freeze_dims] = obs_frozen
+    def reset_training_for_progdist(self):
+        assert self.training_mode == "progdist", "Training mode must be progdist"
+        if self.global_step > 0:
+            scales = self.ema_scale_fn(self.global_step)[1]
+            scales2 = self.ema_scale_fn(self.global_step - 1)[1]
+            if scales != scales2:
+                with torch.no_grad():
+                    update_ema(
+                        self.teacher_model.parameters(),
+                        self.model.parameters(),
+                        0.0,
+                    )
+                # reset optimizer
+                self.opt = RAdam(
+                    self.mp_trainer.master_params,
+                    lr=self.lr,
+                    weight_decay=self.weight_decay,
+                )
+                self.ema = [
+                    ExponentialMovingAverage(self.mp_trainer.master_params, decay=rate)
+                    for rate in range(len(self.ema_rate))
+                ]
+                if scales == 2:
+                    self.lr_anneal_steps *= 2
+                self.teacher_model.eval()
+                self.step = 0
 
-            pred_xs.append(xtp1)
-            xt = xtp1
-
-        pred_xs = torch.stack(pred_xs)
-
-        return pred_xs
-
-    def update_step(self, obs, action, reward, step):
+    def update_single_step(self, obs, action, reward, step):
         assert obs.dim() == 3
         T, batch_size, _ = obs.shape
 
@@ -737,11 +745,7 @@ class CMDx(DiffusionDx):
             else:
                 raise ValueError(f"Unknown training mode {self.training_mode}")
 
-            if self.use_ddp:
-                with self.ddp_model.no_sync():
-                    losses = compute_losses()
-            else:
-                losses = compute_losses()
+            losses = compute_losses()
 
             if isinstance(self.schedule_sampler, LossAwareSampler):
                 self.schedule_sampler.update_with_local_losses(
@@ -775,46 +779,98 @@ class CMDx(DiffusionDx):
 
         return torch.stack(diffusion_losses).mean().item()
 
-    def _update_target_ema(self):
-        target_ema, scales = self.ema_scale_fn(self.global_step)
-        with torch.no_grad():
-            update_ema(
-                self.target_model.parameters(),
-                self.model.parameters(),
-                rate=target_ema,
-            )
+    def update_multi_step(self, obs, action, reward, step):
+        assert obs.dim() == 3
+        T, batch_size, _ = obs.shape
 
-            master_params_to_model_params(
-                self.target_model_param_groups_and_shapes,
-                self.target_model_master_params,
-            )
+        self.mp_trainer.zero_grad()
+        t, weights = self.schedule_sampler.sample(batch_size, dist_util.DistUtil.dev())
 
-    def reset_training_for_progdist(self):
-        assert self.training_mode == "progdist", "Training mode must be progdist"
-        if self.global_step > 0:
-            scales = self.ema_scale_fn(self.global_step)[1]
-            scales2 = self.ema_scale_fn(self.global_step - 1)[1]
-            if scales != scales2:
-                with torch.no_grad():
-                    update_ema(
-                        self.teacher_model.parameters(),
-                        self.model.parameters(),
-                        0.0,
-                    )
-                # reset optimizer
-                self.opt = RAdam(
-                    self.mp_trainer.master_params,
-                    lr=self.lr,
-                    weight_decay=self.weight_decay,
+        ema, num_scales = self.ema_scale_fn(self.step)
+
+        diffusion_losses = []
+
+        # Convert from (T, B, obs_dim) to (B, T, obs_dim)
+        obs = obs.permute(1, 0, 2)
+        action = action.permute(1, 0, 2)
+
+        x0 = obs
+        model_kwargs = {"initial_state": obs[:, 0, :], "actions": action}
+        if self.training_mode == "progdist":
+            if num_scales == self.ema_scale_fn(0)[1]:
+                compute_losses = functools.partial(
+                    self.diffusion.progdist_losses,
+                    self.ddp_model,
+                    x0,
+                    num_scales,
+                    target_model=self.teacher_model,
+                    target_diffusion=self.teacher_diffusion,
+                    model_kwargs=model_kwargs,
                 )
-                self.ema = [
-                    ExponentialMovingAverage(self.mp_trainer.master_params, decay=rate)
-                    for rate in range(len(self.ema_rate))
-                ]
-                if scales == 2:
-                    self.lr_anneal_steps *= 2
-                self.teacher_model.eval()
-                self.step = 0
+            else:
+                compute_losses = functools.partial(
+                    self.diffusion.progdist_losses,
+                    self.ddp_model,
+                    x0,
+                    num_scales,
+                    target_model=self.target_model,
+                    target_diffusion=self.diffusion,
+                    model_kwargs=model_kwargs,
+                )
+        elif self.training_mode == "consistency_distillation":
+            compute_losses = functools.partial(
+                self.diffusion.consistency_losses,
+                self.ddp_model,
+                x0,
+                num_scales,
+                target_model=self.target_model,
+                teacher_model=self.teacher_model,
+                teacher_diffusion=self.teacher_diffusion,
+                model_kwargs=model_kwargs,
+            )
+        elif self.training_mode == "consistency_training":
+            compute_losses = functools.partial(
+                self.diffusion.consistency_losses,
+                self.ddp_model,
+                x0,
+                num_scales,
+                target_model=self.target_model,
+                model_kwargs=model_kwargs,
+            )
+        else:
+            raise ValueError(f"Unknown training mode {self.training_mode}")
+
+        losses = compute_losses()
+
+        if isinstance(self.schedule_sampler, LossAwareSampler):
+            self.schedule_sampler.update_with_local_losses(t, losses["loss"].detach())
+
+        loss = (losses["loss"] * weights).mean()
+
+        diffusion_losses.append(losses["loss"])
+
+        self.mp_trainer.backward(loss)
+
+        took_step = self.mp_trainer.optimize(self.opt, step)
+
+        if took_step:
+            for ema in self.ema:
+                ema.update(self.mp_trainer.master_params)
+
+            if self.target_model:
+                self._update_target_ema()
+
+            if self.training_mode == "progdist":
+                self.reset_training_for_progdist()
+
+            self.global_step += 1
+            self.step += 1
+
+        step_diffusion_loss = torch.stack(diffusion_losses).mean().item()
+
+        logger.logkv_mean("train_diffusion/loss", step_diffusion_loss, step)
+
+        return torch.stack(diffusion_losses).mean().item()
 
 
 class ScoreSDEDx(DiffusionDx):
@@ -828,138 +884,31 @@ class ScoreSDEDx(DiffusionDx):
         self.sde_eps = sde_eps
         self.sde_likelihood_weighting = sde_likelihood_weighting
 
-    def unroll_policy(self, init_x, policy, sample=True, last_u=True, detach_xt=False):
-        assert init_x.dim() == 2
-        n_batch = init_x.size(0)
+    def sample_fn(self, n_batch, model_kwargs):
+        sde = self.diffusion
+        sampling_eps = 1e-3
+        if isinstance(sde, VESDE):
+            sampling_eps = 1e-5
+        sampling_shape = (
+            (n_batch, self.horizon, self.obs_dim)
+            if self.multi_step
+            else (n_batch, self.obs_dim)
+        )
+        inverse_scaler = lambda x: x
+        sampling_fn = functools.partial(
+            sde_sampling.get_sampling_fn,
+            self.sde_sampler,
+            sde,
+            sampling_shape,
+            inverse_scaler,
+            sampling_eps,
+            continuous=self.sde_continuous,
+            device=dist_util.DistUtil.dev(),
+        )
+        dx_sample, n = sampling_fn(model_kwargs=model_kwargs)(self.model)
+        return dx_sample
 
-        if self.freeze_dims is not None:
-            obs_frozen = init_x[:, self.freeze_dims]
-
-        pred_xs = []
-        us = []
-        log_p_us = []
-        xt = init_x
-        for t in range(self.horizon - 1):
-            policy_kwargs = {}
-            if sample:
-                _, ut, log_p_ut = policy(xt, **policy_kwargs)
-            else:
-                ut, _, log_p_ut = policy(xt, **policy_kwargs)
-            us.append(ut)
-            log_p_us.append(log_p_ut)
-
-            if detach_xt:
-                xt = xt.detach()
-
-            # State-action embedding
-            # xu_emb = self.xu_enc(xut).unsqueeze(0)
-
-            # Sampling ScoreSDEDx
-            sde = self.diffusion
-            sampling_eps = 1e-3
-            if isinstance(sde, VESDE):
-                sampling_eps = 1e-5
-            sampling_shape = (n_batch, self.obs_dim)
-            inverse_scaler = lambda x: x
-            sampling_fn = functools.partial(
-                sde_sampling.get_sampling_fn,
-                self.sde_sampler,
-                sde,
-                sampling_shape,
-                inverse_scaler,
-                sampling_eps,
-                continuous=self.sde_continuous,
-                device=dist_util.DistUtil.dev(),
-            )
-            model_kwargs = {"state": xt, "action": ut}
-            dx_sample, n = sampling_fn(model_kwargs=model_kwargs)(self.model)
-
-            if self.abs_pos:
-                xtp1 = dx_sample
-            else:
-                # Assume that s_{t+1} = s_t + dx_t
-                xtp1 = xt + dx_sample
-
-            if self.freeze_dims is not None:
-                xtp1[:, self.freeze_dims] = obs_frozen
-
-            pred_xs.append(xtp1)
-            xt = xtp1
-
-        if last_u:
-            policy_kwargs = {}
-            if sample:
-                _, ut, log_p_ut = policy(xt, **policy_kwargs)
-            else:
-                ut, _, log_p_ut = policy(xt, **policy_kwargs)
-            us.append(ut)
-            log_p_us.append(log_p_ut)
-
-        us = torch.stack(us)
-        log_p_us = torch.stack(log_p_us).squeeze(2)
-        if self.horizon <= 1:
-            pred_xs = torch.empty(0, n_batch, self.obs_dim).to(init_x.device)
-        else:
-            pred_xs = torch.stack(pred_xs)
-
-        return us, log_p_us, pred_xs
-
-    def unroll(self, x, us, detach_xt=False):
-        assert x.dim() == 2
-        assert us.dim() == 3
-        n_batch = x.size(0)
-        assert us.size(1) == n_batch
-
-        if self.freeze_dims is not None:
-            obs_frozen = x[:, self.freeze_dims]
-
-        pred_xs = []
-        xt = x
-        for t in range(us.size(0)):
-            ut = us[t]
-
-            if detach_xt:
-                xt = xt.detach()
-
-            # State-action embedding
-            # xu_emb = self.xu_enc(xut).unsqueeze(0)
-
-            # Sampling ScoreSDEDx
-            sde = self.diffusion
-            sampling_eps = 1e-3
-            if isinstance(sde, VESDE):
-                sampling_eps = 1e-5
-            sampling_shape = (n_batch, self.obs_dim)
-            inverse_scaler = lambda x: x
-            sampling_fn = functools.partial(
-                sde_sampling.get_sampling_fn,
-                self.sde_sampler,
-                sde,
-                sampling_shape,
-                inverse_scaler,
-                sampling_eps,
-                continuous=self.sde_continuous,
-                device=dist_util.DistUtil.dev(),
-            )
-            model_kwargs = {"state": xt, "action": ut}
-            dx_sample, n = sampling_fn(model_kwargs=model_kwargs)(self.model)
-
-            if self.abs_pos:
-                xtp1 = dx_sample
-            else:
-                # Assume that s_{t+1} = s_t + dx_t
-                xtp1 = xt + dx_sample
-
-            if self.freeze_dims is not None:
-                xtp1[:, self.freeze_dims] = obs_frozen
-            pred_xs.append(xtp1)
-            xt = xtp1
-
-        pred_xs = torch.stack(pred_xs)
-
-        return pred_xs
-
-    def update_step(self, obs, action, reward, step):
+    def update_single_step(self, obs, action, reward, step):
         assert obs.dim() == 3
         T, batch_size, _ = obs.shape
 
@@ -1005,11 +954,7 @@ class ScoreSDEDx(DiffusionDx):
                     model_kwargs=model_kwargs,
                 )
 
-            if self.use_ddp:
-                with self.ddp_model.no_sync():
-                    losses = compute_losses()
-            else:
-                losses = compute_losses()
+            losses = compute_losses()
 
             loss = (losses["loss"]).mean()
 
@@ -1022,6 +967,75 @@ class ScoreSDEDx(DiffusionDx):
             if took_step:
                 for ema in self.ema:
                     ema.update(self.mp_trainer.master_params)
+
+        step_diffusion_loss = torch.stack(diffusion_losses).mean().item()
+
+        logger.logkv_mean("train_diffusion/loss", step_diffusion_loss, step)
+
+        return torch.stack(diffusion_losses).mean().item()
+
+    def update_multi_step(self, obs, action, reward, step):
+        assert obs.dim() == 3
+        T, batch_size, _ = obs.shape
+
+        diffusion_losses = []
+        self.mp_trainer.zero_grad()
+
+        # Convert from (T, B, obs_dim) to (B, T, obs_dim)
+        x0 = x0.permute(1, 0, 2)
+        action = action.permute(1, 0, 2)
+
+        model_kwargs = {
+            "initial_state": obs[:, 0, :],
+            "actions": action,
+        }
+
+        x0 = obs
+
+        # Score SDE Score-matching Loss
+        if self.sde_continuous:
+            t = (
+                torch.rand(batch_size, device=dist_util.DistUtil.dev())
+                * (self.diffusion.T - self.sde_eps)
+                + self.sde_eps
+            )
+            compute_losses = functools.partial(
+                self._continuous_loss,
+                x0,
+                t,
+                model_kwargs,
+            )
+        else:
+            assert (
+                not self.sde_likelihood_weighting
+            ), "Likelihood weighting is not supported for original SMLD/DDPM training."
+            t = torch.randint(
+                0,
+                self.diffusion.N,
+                (batch_size,),
+                device=dist_util.DistUtil.dev(),
+            )
+            compute_losses = functools.partial(
+                self.diffusion.training_losses,
+                model=self.ddp_model,
+                batch=x0,
+                labels=t,
+                model_kwargs=model_kwargs,
+            )
+
+        losses = compute_losses()
+
+        loss = (losses["loss"]).mean()
+
+        diffusion_losses.append(losses["loss"])
+
+        self.mp_trainer.backward(loss)
+
+        took_step = self.mp_trainer.optimize(self.opt, step)
+
+        if took_step:
+            for ema in self.ema:
+                ema.update(self.mp_trainer.master_params)
 
         step_diffusion_loss = torch.stack(diffusion_losses).mean().item()
 

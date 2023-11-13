@@ -189,6 +189,9 @@ class TensorBoardOutputFormat(KVWriter):
         step = step or self.step
         self.writer.add_histogram(key, values, step)
 
+    def log_graph(self, key, values):
+        self.writer.add_graph(key, values)
+
     def close(self):
         if self.writer:
             self.writer.close()
@@ -226,6 +229,13 @@ def log_histogram(key, values, step=None):
     Log a histogram of values.
     """
     return get_current().log_histogram(key, values, step)
+
+
+def log_graph(key, values):
+    """
+    Log a histogram of values.
+    """
+    return get_current().log_graph(key, values)
 
 
 def dump(step=None):
@@ -388,6 +398,11 @@ class Logger(object):
         for fmt in self.output_formats:
             if isinstance(fmt, TensorBoardOutputFormat):
                 fmt.log_histogram(key, values, step)
+
+    def log_graph(self, key, values):
+        for fmt in self.output_formats:
+            if isinstance(fmt, TensorBoardOutputFormat):
+                fmt.log_graph(key, values)
 
     def logkv(self, key, val):
         self.name2val[key] = val

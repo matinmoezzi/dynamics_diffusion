@@ -1,5 +1,3 @@
-# Copyright (c) Facebook, Inc. and its affiliates.
-
 import torch
 from torch import nn
 import torch.nn.functional as F
@@ -26,7 +24,7 @@ class SeqNN(nn.Module):
         x_dec_hidden_depth,
         rec_type,
         rec_latent_dim,
-        rec_num_layers
+        rec_num_layers,
     ):
         super().__init__()
 
@@ -217,7 +215,7 @@ class SeqDx(nn.Module):
         rec_latent_dim,
         rec_num_layers,
         lr,
-        abs_pos=False
+        abs_pos=False,
     ):
         super().__init__()
 
@@ -236,6 +234,7 @@ class SeqDx(nn.Module):
         self.rec_latent_dim = rec_latent_dim
         self.rec_num_layers = rec_num_layers
         self.lr = lr
+        self.multi_step = False
 
         self.model = SeqNN(
             env_name,
@@ -243,7 +242,6 @@ class SeqDx(nn.Module):
             action_dim,
             horizon,
             detach_xt,
-            clip_grad_norm,
             xu_enc_hidden_dim,
             xu_enc_hidden_depth,
             x_dec_hidden_dim,

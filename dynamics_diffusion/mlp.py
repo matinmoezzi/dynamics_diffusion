@@ -39,6 +39,8 @@ class MLP(nn.Module):
             nn.Linear(t_dim * 2, t_dim),
         )
 
+        cond_dim += x_dim
+
         input_dim = x_dim + cond_dim + t_dim
         self.mid_layer = nn.Sequential(
             nn.Linear(input_dim, 512),

@@ -2,6 +2,7 @@
 
 import abc
 import copy
+import numpy as np
 
 import torch
 import torch.nn.functional as F
@@ -74,6 +75,8 @@ class SACSVGAgent(Agent):
         horizon,
         warmup_steps,
         det_suffix,
+        traj_optimizer,
+        num_particles,
     ):
         super().__init__()
         self.env_name = env_name
@@ -83,6 +86,7 @@ class SACSVGAgent(Agent):
         self.device = dist_util.DistUtil.dev()
         self.num_train_steps = num_train_steps
         self.det_suffix = det_suffix
+        self.num_particles = num_particles
 
         self.discount = discount
         self.discount_horizon = torch.tensor(
@@ -105,6 +109,10 @@ class SACSVGAgent(Agent):
 
         self.temp = temp
         self.dx = dx.to(self.device)
+
+        if self.dx.multi_step:
+            self.traj_optimizer = traj_optimizer
+            self.traj_optimizer.set_trajectory_eval_fn(self.trajectory_eval_fn)
 
         self.rew = utils.mlp(
             obs_dim + action_dim, rew_hidden_dim, 1, rew_hidden_depth
@@ -277,6 +285,45 @@ class SACSVGAgent(Agent):
         total_log_p_us = log_p_us.sum(dim=0).squeeze()
         return total_rewards, first_log_p, total_log_p_us
 
+    def expand_Q_multistep(self, xs, critic, sample=True, discount=False):
+        assert xs.dim() == 2
+        n_batch = xs.size(0)
+        us, pred_obs = self.dx.unroll_multi_step(
+            xs,
+            self.traj_optimizer.plan(obs=xs),
+            detach_xt=self.actor_detach_rho,
+        )
+
+        all_obs = torch.cat((xs.unsqueeze(0), pred_obs), dim=0)
+        xu = torch.cat((all_obs, us), dim=2)
+        dones = self.done(xu).sigmoid().squeeze(dim=2)
+        not_dones = 1.0 - dones
+        not_dones = utils.accum_prod(not_dones)
+        last_not_dones = not_dones[-1]
+
+        rewards = not_dones * self.rew(xu).squeeze(2)
+        if critic is not None:
+            with utils.eval_mode(critic):
+                q1, q2 = critic(all_obs[-1], us[-1])
+            q = torch.min(q1, q2).reshape(n_batch)
+            rewards[-1] = last_not_dones * q
+
+        assert rewards.size() == (self.horizon, n_batch)
+
+        if discount:
+            rewards *= self.discount_horizon.unsqueeze(1)
+
+        total_rewards = rewards.sum(dim=0)
+
+        policy_kwargs = {}
+        if sample:
+            _, ut, log_p_ut = self.actor(xs, **policy_kwargs)
+        else:
+            ut, _, log_p_ut = self.actor(xs, **policy_kwargs)
+        first_log_p = log_p_ut
+
+        return total_rewards, first_log_p
+
     def update_actor_and_alpha(self, xs, step):
         assert xs.ndimension() == 2
         n_batch, _ = xs.size()
@@ -302,10 +349,15 @@ class SACSVGAgent(Agent):
         else:
             # Switch to the model-based updates.
             # i.e., fit to the controller's sequence cost
-            rewards, first_log_p, total_log_p_us = self.expand_Q(
-                xs, self.critic, sample=True, discount=True
-            )
-            assert total_log_p_us.size() == rewards.size()
+            if self.dx.multi_step:
+                rewards, first_log_p = self.expand_Q_multistep(
+                    xs, self.critic, sample=True, discount=True
+                )
+            else:
+                rewards, first_log_p, total_log_p_us = self.expand_Q(
+                    xs, self.critic, sample=True, discount=True
+                )
+                assert total_log_p_us.size() == rewards.size()
             actor_loss = -(rewards / self.horizon).mean()
 
         logger.logkv_mean("train_actor/loss", actor_loss, step)
@@ -562,3 +614,49 @@ class SACSVGAgent(Agent):
         self.done_opt.step()
 
         logger.logkv_mean("train_model/done_loss", done_loss, step)
+
+    def evaluate_action_sequences(
+        self,
+        action_sequences: torch.Tensor,
+        initial_state: torch.Tensor,
+        num_particles: int,
+    ) -> torch.Tensor:
+        """Evaluates a batch of action sequences on the model.
+
+        Args:
+            action_sequences (torch.Tensor): a batch of action sequences to evaluate.  Shape must
+                be ``B x H x A``, where ``B``, ``H``, and ``A`` represent batch size, horizon,
+                and action dimension, respectively.
+            initial_state (torch.Tensor): the initial state for the trajectories.
+            num_particles (int): number of times each action sequence is replicated. The final
+                value of the sequence will be the average over its particles values.
+
+        Returns:
+            (torch.Tensor): the accumulated reward for each action sequence, averaged over its
+            particles.
+        """
+        with torch.no_grad():
+            assert len(action_sequences.shape) == 3
+
+            init_states = torch.repeat_interleave(initial_state, num_particles, dim=0)
+            action_sequences = torch.repeat_interleave(
+                action_sequences, num_particles, dim=0
+            )
+            pred_next_states = self.dx.unroll(init_states, action_sequences)
+            total_reward = torch.zeros(pred_next_states.shape[0], 1).to(self.device)
+            pred_next_states[:, 0] = init_states
+            for h in range(action_sequences.shape[1]):
+                obs = pred_next_states[:, h]
+                action = action_sequences[:, h]
+                xu = torch.cat((obs, action), dim=1)
+                pred_rew = self.rew(xu)
+                total_reward += pred_rew
+            total_reward = total_reward.reshape(-1, num_particles)
+            return total_reward.mean(dim=-1)
+
+    def trajectory_eval_fn(self, initial_state, action_sequences):
+        return self.evaluate_action_sequences(
+            action_sequences,
+            initial_state=initial_state,
+            num_particles=self.num_particles,
+        )

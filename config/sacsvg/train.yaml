@@ -63,6 +63,7 @@ agent:
   action_dim: ${action_dim}
   action_range: ${action_range}
   dx: ${dx}
+  traj_optimizer: ${traj_optimizer}
   num_train_steps: ${num_train_steps}
 
   temp: ${learn_temp}
@@ -108,6 +109,8 @@ agent:
 
   det_suffix: 0.0
 
+  num_particles: 20
+
 normal_actor:
   _target_: sacsvg.actor.Actor
   obs_dim: ${obs_dim}
@@ -133,11 +136,35 @@ learn_temp:
   only_decrease_alpha: false
   lr: 1e-4
 
+traj_optimizer:
+  _target_: sacsvg.traj_optimizer.TrajectoryOptimizerAgent
+  _recursive_: False
+  planning_horizon: ${agent.horizon}
+  replan_freq: 1
+  verbose: False
+  action_lb: ${action_lb}
+  action_ub: ${action_ub}
+  # this is the optimizer to generate and choose a trajectory
+  optimizer_cfg: 
+    _target_: sacsvg.traj_optimizer.ICEMOptimizer
+    num_iterations: 5 
+    elite_ratio: 0.1
+    population_size: ${agent.step_batch_size}
+    population_decay_factor: 1.3
+    colored_noise_exponent: 2
+    keep_elite_frac: 0.3
+    alpha: 0.1
+    lower_bound: ??? 
+    upper_bound: ??? 
+    return_mean_elites: true
+    population_size_module: null 
+    device: ${device}
+
 hydra:
   searchpath:
     - file://config
   run:
-    dir: ./logs/sacsvg/${env_name}/${hydra:runtime.choices.dx}/${device}${oc.decode:${oc.env:WORLD_SIZE,1}}_${human_readable_steps:${num_train_steps}}_H${agent.horizon}${if_else:${agent.dx.abs_pos},_abspos_,_}${now:%Y%m%d-%H%M%S}
+    dir: ./test_logs/sacsvg/${env_name}/${hydra:runtime.choices.dx}/${device}${oc.decode:${oc.env:WORLD_SIZE,1}}_${human_readable_steps:${num_train_steps}}_H${agent.horizon}${if_else:${agent.dx.abs_pos},_abspos_,_}${now:%Y%m%d-%H%M%S}
   sweep:
     dir: ./exp/${now:%Y.%m.%d}/${now:%H%M}_${experiment}
     subdir: ${hydra.job.num}

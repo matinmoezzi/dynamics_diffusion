@@ -9,35 +9,17 @@ from hydra.core.hydra_config import HydraConfig
 from hydra.core.utils import _save_config, configure_log
 
 from dynamics_diffusion import dist_util, logger
-
-from scripts.train_diffusion import (
+from dynamics_diffusion.utils import (
+    del_key,
+    extract_step_number,
+    get_runtime_choice,
     karras_distillation,
     sde_continuous_solver,
     steps_to_human_readable,
 )
 
+
 NUM_CLASSES = 1000
-
-import re
-
-
-def del_key(cfg: DictConfig, key: str):
-    with read_write(cfg):
-        with open_dict(cfg):
-            del cfg[key]
-
-
-def get_runtime_choice(key):
-    instance = HydraConfig.get()
-    return instance.runtime.choices[f"{key}@sampler.{key}"]
-
-
-def extract_step_number(path: str):
-    # Extract step number using regex from the path
-    match = re.search(r"checkpoint_(\d+).pt", path)
-    if match:
-        return str(int(match.group(1)))
-    return 0  # Return -1 or any default value if pattern not found
 
 
 OmegaConf.register_new_resolver(

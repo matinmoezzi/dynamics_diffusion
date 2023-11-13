@@ -1,6 +1,6 @@
 defaults:
   - _self_
-  - /dynamics/model@model: MLP
+  - /dynamics/model@model: Transformer
   - /dynamics/diffusion@diffusion: karras
 _target_: sacsvg.diffusion_dx.CMDx
 

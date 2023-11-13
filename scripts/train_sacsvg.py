@@ -18,7 +18,12 @@ from tqdm import trange
 from dynamics_diffusion import dist_util
 from dynamics_diffusion import logger
 from dynamics_diffusion.logger import SACSVGLogger
-from scripts.train_diffusion import karras_distillation
+from dynamics_diffusion.utils import (
+    get_runtime_choice,
+    if_resolver,
+    karras_distillation,
+    steps_to_human_readable,
+)
 
 setproctitle("sacsvg")
 
@@ -51,6 +56,9 @@ class Workspace(object):
             float(self.env.action_space.low.min()),
             float(self.env.action_space.high.max()),
         ]
+        cfg.traj_optimizer.action_lb = self.env.action_space.low.tolist()
+        cfg.traj_optimizer.action_ub = self.env.action_space.high.tolist()
+
         self.agent = hydra.utils.instantiate(cfg.agent)
 
         if isinstance(cfg.replay_buffer_capacity, str):
@@ -240,29 +248,6 @@ class Workspace(object):
             self.replay_buffer.load_data(self.replay_dir)
 
         self.temp = hydra.utils.instantiate(self.cfg.agent.temp)
-
-
-def steps_to_human_readable(step_count) -> str:
-    # Ensure the input is an integer
-    step_count = int(step_count)
-
-    # Convert to human-readable format
-    if step_count < 1000:
-        return str(step_count)
-    elif step_count < 1000000:
-        return f"{step_count/1000:.0f}K"  # for thousands
-    else:
-        return f"{step_count/1000000:.0f}M"  # for millions
-
-
-def get_runtime_choice(key):
-    instance = HydraConfig.get()
-    return instance.runtime.choices[f"{key}@trainer.{key}"]
-
-
-# Custom resolver that acts like a simple if-else statement
-def if_resolver(condition, true_val, false_val):
-    return true_val if condition else false_val
 
 
 # Registering the custom resolver with the name 'if_else'

@@ -1,0 +1,15 @@
+_target_: sacsvg.transformer.TransformerDiffusion
+input_dim: ${..obs_dim}
+output_dim: ${..obs_dim}
+horizon: ${..horizon}
+cond_dim: ${..action_dim}
+
+n_layer: 8
+n_head: 4
+n_emb: 768
+p_drop_emb: 0.0
+p_drop_attn: 0.1
+
+causal_attn: False
+time_as_cond: True # if false, use BERT like encoder only arch, time as input
+n_cond_layers: 0 # >0: use transformer encoder for cond, otherwise use MLP

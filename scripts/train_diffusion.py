@@ -10,40 +10,12 @@ from pathlib import Path
 
 from dynamics_diffusion import dist_util, logger
 from dynamics_diffusion.script_util import ConfigStore
-
-
-def steps_to_human_readable(step_count) -> str:
-    # Ensure the input is an integer
-    step_count = int(step_count)
-
-    # Convert to human-readable format
-    if step_count < 1000:
-        return str(step_count)
-    elif step_count < 1000000:
-        return f"{step_count/1000:.0f}K"  # for thousands
-    else:
-        return f"{step_count/1000000:.0f}M"  # for millions
-
-
-def sde_continuous_solver(node):
-    if hasattr(node, "continuous"):
-        if node.continuous:
-            return "cont"
-    return ""
-
-
-def get_runtime_choice(key):
-    instance = HydraConfig.get()
-    return instance.runtime.choices[f"{key}@trainer.{key}"]
-
-
-def karras_distillation(training_mode):
-    if training_mode == "progdist":
-        return False
-    elif "consistency" in training_mode:
-        return True
-    else:
-        raise ValueError(f"Unknown training mode {training_mode}")
+from dynamics_diffusion.utils import (
+    get_runtime_choice,
+    karras_distillation,
+    sde_continuous_solver,
+    steps_to_human_readable,
+)
 
 
 OmegaConf.register_new_resolver("sde_continuous_solver", sde_continuous_solver)
