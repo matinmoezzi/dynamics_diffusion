@@ -86,7 +86,7 @@ agent:
 
   discount: 0.99
   seq_batch_size: 256
-  step_batch_size: 1024
+  step_batch_size: 512
   horizon: 3
   seq_train_length: ${agent.horizon}
   update_freq: 1
@@ -149,7 +149,7 @@ traj_optimizer:
     _target_: sacsvg.traj_optimizer.ICEMOptimizer
     num_iterations: 5 
     elite_ratio: 0.1
-    population_size: ${agent.step_batch_size}
+    population_size: 200
     population_decay_factor: 1.3
     colored_noise_exponent: 2
     keep_elite_frac: 0.3

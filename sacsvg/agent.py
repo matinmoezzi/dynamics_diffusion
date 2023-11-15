@@ -288,14 +288,15 @@ class SACSVGAgent(Agent):
     def expand_Q_multistep(self, xs, critic, sample=True, discount=False):
         assert xs.dim() == 2
         n_batch = xs.size(0)
-        us, pred_obs = self.dx.unroll_multi_step(
+        us = torch.stack([self.traj_optimizer.plan(obs=x) for x in xs])
+        pred_obs = self.dx.unroll_multi_step(
             xs,
-            self.traj_optimizer.plan(obs=xs),
+            us,
             detach_xt=self.actor_detach_rho,
         )
-
-        all_obs = torch.cat((xs.unsqueeze(0), pred_obs), dim=0)
-        xu = torch.cat((all_obs, us), dim=2)
+        pred_obs[:, 0] = xs
+        all_obs = pred_obs
+        xu = torch.cat((pred_obs, us), dim=2)
         dones = self.done(xu).sigmoid().squeeze(dim=2)
         not_dones = 1.0 - dones
         not_dones = utils.accum_prod(not_dones)
@@ -637,14 +638,18 @@ class SACSVGAgent(Agent):
         """
         with torch.no_grad():
             assert len(action_sequences.shape) == 3
-
-            init_states = torch.repeat_interleave(initial_state, num_particles, dim=0)
+            assert initial_state.ndim in (1, 3), "initial_state must be a 1-D or 3-D"
+            population_size = action_sequences.shape[0]
+            tiling_shape = (num_particles * population_size,) + tuple(
+                [1] * initial_state.ndim
+            )
+            initial_obs_batch = initial_state.tile(tiling_shape)
             action_sequences = torch.repeat_interleave(
                 action_sequences, num_particles, dim=0
             )
-            pred_next_states = self.dx.unroll(init_states, action_sequences)
+            pred_next_states = self.dx.unroll(initial_obs_batch, action_sequences)
             total_reward = torch.zeros(pred_next_states.shape[0], 1).to(self.device)
-            pred_next_states[:, 0] = init_states
+            pred_next_states[:, 0] = initial_obs_batch
             for h in range(action_sequences.shape[1]):
                 obs = pred_next_states[:, h]
                 action = action_sequences[:, h]

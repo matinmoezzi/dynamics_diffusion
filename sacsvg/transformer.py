@@ -6,8 +6,6 @@ import math
 from dynamics_diffusion import logger
 from dynamics_diffusion.mlp import SinusoidalPosEmb
 
-from torchviz import make_dot
-
 
 class ModuleAttrMixin(nn.Module):
     def __init__(self):
@@ -384,6 +382,8 @@ class TransformerDiffusion(ModuleAttrMixin):
         self.float()
 
     def visualize(self):
+        from torchviz import make_dot
+
         input = torch.randn(1, self.T, self.input_dim)
         action = torch.randn(1, self.T, self.cond_dim)
         time = torch.randn(1)
