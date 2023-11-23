@@ -238,7 +238,7 @@ class DiffusionDx(nn.Module):
 
         return us, log_p_us, pred_xs
 
-    def unroll_single_step(self, x, us, detach_xt=False):
+    def unroll_single_step(self, x, us):
         assert x.dim() == 2
         assert us.dim() == 3
         n_batch = x.size(0)
@@ -251,9 +251,6 @@ class DiffusionDx(nn.Module):
         xt = x
         for t in range(us.size(0)):
             ut = us[t]
-
-            if detach_xt:
-                xt = xt.detach()
 
             dx_sample = self.sample_fn(
                 n_batch, model_kwargs={"state": xt, "action": ut}
@@ -275,16 +272,13 @@ class DiffusionDx(nn.Module):
 
         return pred_xs
 
-    def unroll_multi_step(self, x, us, detach_xt=False):
+    def unroll_multi_step(self, x, us):
         assert x.dim() == 2
         assert us.dim() == 3
         n_batch = x.size(0)
 
         if self.freeze_dims is not None:
             obs_frozen = x[:, self.freeze_dims]
-
-        if detach_xt:
-            x = x.detach()
 
         dx_sample = self.sample_fn(
             n_batch, model_kwargs={"initial_state": x, "actions": us}

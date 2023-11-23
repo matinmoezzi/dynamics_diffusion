@@ -2,7 +2,6 @@
 
 import abc
 import copy
-import numpy as np
 
 import torch
 import torch.nn.functional as F
@@ -288,15 +287,15 @@ class SACSVGAgent(Agent):
     def expand_Q_multistep(self, xs, critic, sample=True, discount=False):
         assert xs.dim() == 2
         n_batch = xs.size(0)
-        us = torch.stack([self.traj_optimizer.plan(obs=x) for x in xs])
-        pred_obs = self.dx.unroll_multi_step(
-            xs,
-            us,
-            detach_xt=self.actor_detach_rho,
-        )
+
+        us = self.traj_optimizer.plan(obs=xs)
+
+        pred_obs = self.dx.unroll(xs, us)
+
         pred_obs[:, 0] = xs
-        all_obs = pred_obs
-        xu = torch.cat((pred_obs, us), dim=2)
+        all_obs = pred_obs.permute(1, 0, 2)
+        us = us.permute(1, 0, 2)
+        xu = torch.cat((all_obs, us), dim=2)
         dones = self.done(xu).sigmoid().squeeze(dim=2)
         not_dones = 1.0 - dones
         not_dones = utils.accum_prod(not_dones)
@@ -637,27 +636,31 @@ class SACSVGAgent(Agent):
             particles.
         """
         with torch.no_grad():
-            assert len(action_sequences.shape) == 3
-            assert initial_state.ndim in (1, 3), "initial_state must be a 1-D or 3-D"
-            population_size = action_sequences.shape[0]
-            tiling_shape = (num_particles * population_size,) + tuple(
-                [1] * initial_state.ndim
+            batch_size, population_size, horizon, _ = action_sequences.shape
+            initial_obs_batch = initial_state.unsqueeze(1).repeat(
+                1, num_particles * population_size, 1
             )
-            initial_obs_batch = initial_state.tile(tiling_shape)
-            action_sequences = torch.repeat_interleave(
-                action_sequences, num_particles, dim=0
-            )
+            initial_obs_batch = initial_obs_batch.flatten(0, 1)
+            action_sequences = action_sequences.repeat_interleave(num_particles, dim=1)
+            action_sequences = action_sequences.flatten(0, 1)
+
             pred_next_states = self.dx.unroll(initial_obs_batch, action_sequences)
-            total_reward = torch.zeros(pred_next_states.shape[0], 1).to(self.device)
+
             pred_next_states[:, 0] = initial_obs_batch
-            for h in range(action_sequences.shape[1]):
-                obs = pred_next_states[:, h]
-                action = action_sequences[:, h]
-                xu = torch.cat((obs, action), dim=1)
-                pred_rew = self.rew(xu)
-                total_reward += pred_rew
-            total_reward = total_reward.reshape(-1, num_particles)
-            return total_reward.mean(dim=-1)
+            pred_next_states = pred_next_states.permute(1, 0, 2)
+            action_sequences = action_sequences.permute(1, 0, 2)
+            xu = torch.cat((pred_next_states, action_sequences), dim=2)
+            dones = self.done(xu).sigmoid().squeeze(dim=2)
+            not_dones = 1.0 - dones
+            not_dones = utils.accum_prod(not_dones)
+            rewards = not_dones * self.rew(xu).squeeze(2)
+
+            total_rewards = rewards.sum(dim=0)
+
+            total_rewards = total_rewards.unflatten(
+                0, (batch_size, population_size, num_particles)
+            )
+            return total_rewards.mean(dim=-1)
 
     def trajectory_eval_fn(self, initial_state, action_sequences):
         return self.evaluate_action_sequences(

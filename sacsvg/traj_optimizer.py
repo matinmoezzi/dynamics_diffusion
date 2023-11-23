@@ -648,6 +648,124 @@ class ICEMOptimizer(Optimizer):
         return mu if self.return_mean_elites else best_solution
 
 
+class BatchICEMOptimizer(ICEMOptimizer):
+    def __init__(self, batch_size, **kwargs):
+        super().__init__(**kwargs)
+        self.batch_size = batch_size
+
+    def optimize(
+        self,
+        obj_fun: Callable[[torch.Tensor], torch.Tensor],
+        x0: Optional[torch.Tensor] = None,
+        callback: Optional[Callable[[torch.Tensor, torch.Tensor, int], None]] = None,
+        **kwargs,
+    ) -> torch.Tensor:
+        """Runs the optimization using iCEM.
+
+        Args:
+            obj_fun (callable(tensor) -> tensor): objective function to maximize.
+            x0 (tensor, optional): initial mean for the population. Must
+                be consistent with lower/upper bounds.
+            callback (callable(tensor, tensor, int) -> any, optional): if given, this
+                function will be called after every iteration, passing it as input the full
+                population tensor, its corresponding objective function values, and
+                the index of the current iteration. This can be used for logging and plotting
+                purposes.
+        Returns:
+            (torch.Tensor): the best solution found.
+        """
+        mu = x0.clone()
+        var = self.initial_var.clone()
+
+        if x0.ndim == 2:
+            mu = mu.unsqueeze(0).unsqueeze(1).repeat(self.batch_size, 1, 1, 1)
+        elif x0.ndim == 3:
+            mu = mu.unsqueeze(1)
+        var = var.unsqueeze(0).unsqueeze(1).repeat(self.batch_size, 1, 1, 1)
+
+        best_solution = torch.empty_like(mu)
+        best_value = torch.full((self.batch_size,), float(-np.inf), device=self.device)
+
+        for i in range(self.num_iterations):
+            decay_population_size = np.ceil(
+                np.max(
+                    (
+                        self.population_size * self.population_decay_factor**-i,
+                        2 * self.elite_num,
+                    )
+                )
+            ).astype(np.int32)
+
+            if self.population_size_module:
+                decay_population_size = self._round_up_to_module(
+                    decay_population_size, self.population_size_module
+                )
+            # the last dimension is used for temporal correlations
+            population = powerlaw_psd_gaussian(
+                self.colored_noise_exponent,
+                size=(self.batch_size, decay_population_size, mu.shape[3], mu.shape[2]),
+                device=self.device,
+            ).transpose(2, 3)
+            population = torch.minimum(
+                population * torch.sqrt(var) + mu, self.upper_bound
+            )
+            population = torch.maximum(population, self.lower_bound)
+            if self.elite is not None:
+                kept_elites = torch.index_select(
+                    self.elite,
+                    dim=1,
+                    index=torch.randperm(self.elite_num, device=self.device)[
+                        : self.keep_elite_size
+                    ],
+                )
+                if i == 0:
+                    end_action = (
+                        torch.normal(
+                            mu[:, :, -1, :].repeat(1, kept_elites.shape[1], 1),
+                            torch.sqrt(var[:, :, -1, :]).repeat(
+                                1, kept_elites.shape[1], 1
+                            ),
+                        )
+                        .unsqueeze(2)
+                        .to(self.device)
+                    )
+                    kept_elites_shifted = torch.cat(
+                        (kept_elites[:, :, 1:, :], end_action), dim=2
+                    )
+                    population = torch.cat((population, kept_elites_shifted), dim=1)
+                elif i == self.num_iterations - 1:
+                    population = torch.cat((population, mu), dim=1)
+                else:
+                    population = torch.cat((population, kept_elites), dim=1)
+
+            values = obj_fun(population)
+
+            if callback is not None:
+                callback(population, values, i)
+
+            # filter out NaN values
+            values[values.isnan()] = -1e-10
+            best_values, elite_idx = values.topk(self.elite_num)
+            elite_idx_expanded = (
+                elite_idx.unsqueeze(2)
+                .unsqueeze(3)
+                .expand(-1, -1, population.shape[-2], population.shape[-1])
+            )
+            self.elite = population.gather(1, elite_idx_expanded)
+
+            new_mu = torch.mean(self.elite, dim=1).unsqueeze(1)
+            new_var = torch.var(self.elite, unbiased=False, dim=1).unsqueeze(1)
+            mu = self.alpha * mu + (1 - self.alpha) * new_mu
+            var = self.alpha * var + (1 - self.alpha) * new_var
+
+            mask = best_values[:, 0] > best_value
+            best_value[mask] = best_values[mask, 0]
+            masked_elite_idx = elite_idx_expanded[mask, 0].unsqueeze(1)
+            best_solution[mask] = population.gather(1, masked_elite_idx).clone()
+
+        return (mu if self.return_mean_elites else best_solution).squeeze(1)
+
+
 class TrajectoryOptimizer:
     """Class for using generic optimizers on trajectory optimization problems.
 
@@ -722,10 +840,18 @@ class TrajectoryOptimizer:
             callback=callback,
         )
         if self.keep_last_solution:
-            self.previous_solution = best_solution.roll(-self.replan_freq, dims=0)
-            # Note that initial_solution[i] is the same for all values of [i],
-            # so just pick i = 0
-            self.previous_solution[-self.replan_freq :] = self.initial_solution[0]
+            if best_solution.ndim == 2:
+                self.previous_solution = best_solution.roll(-self.replan_freq, dims=0)
+                # Note that initial_solution[i] is the same for all values of [i],
+                # so just pick i = 0
+                self.previous_solution[-self.replan_freq :] = self.initial_solution[0]
+            elif best_solution.ndim == 3:
+                self.previous_solution = best_solution.roll(-self.replan_freq, dims=1)
+                # Note that initial_solution[i] is the same for all values of [i],
+                # so just pick i = 0
+                self.previous_solution[:, -self.replan_freq :] = self.initial_solution[
+                    0
+                ]
         return best_solution
 
     def reset(self):

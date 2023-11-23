@@ -54,3 +54,11 @@ def extract_step_number(path: str):
     if match:
         return str(int(match.group(1)))
     return 0  # Return -1 or any default value if pattern not found
+
+
+def get_dx_model(dx: str):
+    if dx == "seqdx":
+        return "SeqNN"
+    else:
+        instance = HydraConfig.get()
+        return instance.runtime.choices[f"dynamics/model@dx.model"]

@@ -41,7 +41,7 @@ class TransformerDiffusion(ModuleAttrMixin):
 
         # input is sequence of states (B, T, obs_dim)
         # output is sequence of states (B, T, obs_dim)
-        # cond is sequence of actions (B, T, act_dim) + initial state (B, 1, obs_dim) as a dict
+        # cond is sequence of actions (B, T, act_dim) + initial state (B, 1, obs_dim)
         # assume cond_dim is act_dim and input_dim and output_dim are obs_dim
 
         self.input_dim = input_dim

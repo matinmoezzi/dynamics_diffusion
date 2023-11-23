@@ -19,6 +19,7 @@ from dynamics_diffusion import dist_util
 from dynamics_diffusion import logger
 from dynamics_diffusion.logger import SACSVGLogger
 from dynamics_diffusion.utils import (
+    get_dx_model,
     get_runtime_choice,
     if_resolver,
     karras_distillation,
@@ -252,6 +253,8 @@ class Workspace(object):
 
 # Registering the custom resolver with the name 'if_else'
 OmegaConf.register_new_resolver("if_else", if_resolver, replace=True)
+
+OmegaConf.register_new_resolver("get_dx_model", get_dx_model, replace=True)
 
 OmegaConf.register_new_resolver(
     "karras_distillation", karras_distillation, replace=True

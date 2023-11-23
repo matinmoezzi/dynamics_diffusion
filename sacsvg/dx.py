@@ -242,6 +242,7 @@ class SeqDx(nn.Module):
             action_dim,
             horizon,
             detach_xt,
+            clip_grad_norm,
             xu_enc_hidden_dim,
             xu_enc_hidden_depth,
             x_dec_hidden_dim,
