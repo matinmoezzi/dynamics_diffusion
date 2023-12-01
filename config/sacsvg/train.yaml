@@ -20,7 +20,7 @@ sweep:
 replay_buffer_capacity: min(${num_train_steps}, 1e6)
 # replay_buffer_capacity: ${num_train_steps}
 
-num_seed_steps: 500
+num_seed_steps: 1000
 
 eval_freq: ??? # Over-ridden by env
 num_eval_episodes: 10
@@ -85,8 +85,8 @@ agent:
   full_target_mve: False
 
   discount: 0.99
-  seq_batch_size: 256
-  step_batch_size: 512
+  seq_batch_size: 512
+  step_batch_size: 1024
   horizon: 3
   seq_train_length: ${agent.horizon}
   update_freq: 1
@@ -164,7 +164,7 @@ hydra:
   searchpath:
     - file://config
   run:
-    dir: ./test_logs/sacsvg/${env_name}/${hydra:runtime.choices.dx}/${device}${oc.decode:${oc.env:WORLD_SIZE,1}}_${human_readable_steps:${num_train_steps}}_H${agent.horizon}${if_else:${agent.dx.abs_pos},_abspos_,_}${now:%Y%m%d-%H%M%S}
+    dir: ./logs/sacsvg/${env_name}/${hydra:runtime.choices.dx}/${device}${oc.decode:${oc.env:WORLD_SIZE,1}}_${human_readable_steps:${num_train_steps}}_H${agent.horizon}${if_else:${agent.dx.abs_pos},_abspos_,_}${now:%Y%m%d-%H%M%S}
   sweep:
     dir: ./exp/${now:%Y.%m.%d}/${now:%H%M}_${experiment}
     subdir: ${hydra.job.num}
