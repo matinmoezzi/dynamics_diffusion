@@ -6,6 +6,7 @@ from omegaconf import DictConfig, OmegaConf
 import hydra
 from hydra.core.hydra_config import HydraConfig
 from pathlib import Path
+import wandb
 
 
 from dynamics_diffusion import dist_util, logger
@@ -60,15 +61,21 @@ OmegaConf.register_new_resolver("human_readable_steps", steps_to_human_readable)
 def main(cfg: DictConfig):
     ConfigStore.set_config(cfg)
 
-    log_dir = Path(HydraConfig.get().run.dir, "train").resolve()
-    dist_util.DistUtil.setup_dist(device=cfg.device)
-    log_suffix = (
-        f"[{dist_util.DistUtil.device.upper()}:{dist_util.DistUtil.get_global_rank()}]"
+    hydra_cfg = HydraConfig.get()
+
+    wandb.init(
+        project="diffusion_offline_RL",
+        sync_tensorboard=True,
+        config=OmegaConf.to_container(cfg),
+        name=f"{hydra_cfg.runtime.choices['dataset@trainer.dataset']}-{hydra_cfg.runtime.choices['trainer']}-{hydra_cfg.runtime.choices['diffusion@trainer.diffusion']}-{hydra_cfg.runtime.choices['model@trainer.model']}-{steps_to_human_readable(cfg.trainer.total_training_steps)}",
     )
+
+    log_dir = Path(hydra_cfg.run.dir, "train").resolve()
+    dist_util.DistUtil.setup_dist(device=cfg.device)
+    log_suffix = f"[{dist_util.DistUtil.device}]"
     logger.configure(
         dir=str(log_dir), format_strs=cfg.format_strs, log_suffix=log_suffix
     )
-    logger.log(f"Configuration:\n{cfg}")
 
     trainer = hydra.utils.instantiate(cfg.trainer)
 

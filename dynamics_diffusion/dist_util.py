@@ -45,10 +45,14 @@ class DistUtil:
         if dist.is_initialized():
             return
         if device:
+            device = th.device(device)
             cls.device = device
 
         os.environ["RANK"] = os.environ.get("RANK", "0")
-        os.environ["LOCAL_RANK"] = os.environ.get("LOCAL_RANK", "0")
+        if device.index:
+            os.environ["LOCAL_RANK"] = str(device.index)
+        else:
+            os.environ["LOCAL_RANK"] = os.environ.get("LOCAL_RANK", "0")
         os.environ["WORLD_SIZE"] = os.environ.get("WORLD_SIZE", "1")
         os.environ["MASTER_ADDR"] = os.environ.get("MASTER_ADDR", "localhost")
         os.environ["MASTER_PORT"] = os.environ.get("MASTER_PORT", str(find_free_port()))
@@ -56,7 +60,7 @@ class DistUtil:
         backend = "gloo" if device == "cpu" else "nccl"
 
         dist.init_process_group(backend=backend)
-        if device == "cuda":
+        if device.type == "cuda":
             th.cuda.set_device(int(os.environ["LOCAL_RANK"]))
 
         if cls._instance is None:

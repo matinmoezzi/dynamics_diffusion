@@ -2,9 +2,9 @@ defaults:
   - _self_
   - /model: MLP
   - /diffusion: gaussian
-  - /dataset: kitchen-mixed 
+  - /dataset: maze2d-umaze 
 _target_: dynamics_diffusion.train_util.TrainLoop
-total_training_steps: 21000 
+total_training_steps: 2000000 
 schedule_sampler: "uniform" 
 lr: 1e-4
 weight_decay: 0.0
