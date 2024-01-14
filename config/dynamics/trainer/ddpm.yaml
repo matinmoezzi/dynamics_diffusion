@@ -2,7 +2,7 @@ defaults:
   - _self_
   - /model: MLP
   - /diffusion: gaussian
-  - /dataset: maze2d-umaze 
+  - /dataset: door-expert
 _target_: dynamics_diffusion.train_util.TrainLoop
 total_training_steps: 2000000 
 schedule_sampler: "uniform" 

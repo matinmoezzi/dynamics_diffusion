@@ -21,10 +21,10 @@ def suppress_output():
             yield (err, out)
 
 
-with suppress_output():
-    ## d4rl prints out a variety of warnings
-    import d4rl
-    import gym
+# with suppress_output():
+#     ## d4rl prints out a variety of warnings
+import d4rl
+import gym
 
 
 def get_env(env_name) -> gym.Env:

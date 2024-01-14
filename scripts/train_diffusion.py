@@ -67,7 +67,7 @@ def main(cfg: DictConfig):
         project="diffusion_offline_RL",
         sync_tensorboard=True,
         config=OmegaConf.to_container(cfg),
-        name=f"{hydra_cfg.runtime.choices['dataset@trainer.dataset']}-{hydra_cfg.runtime.choices['trainer']}-{hydra_cfg.runtime.choices['diffusion@trainer.diffusion']}-{hydra_cfg.runtime.choices['model@trainer.model']}-{steps_to_human_readable(cfg.trainer.total_training_steps)}",
+        name=f"{hydra_cfg.runtime.choices['dataset@trainer.dataset']}_{hydra_cfg.runtime.choices['trainer']}_{hydra_cfg.runtime.choices['diffusion@trainer.diffusion']}_{hydra_cfg.runtime.choices['model@trainer.model']}_{steps_to_human_readable(cfg.trainer.total_training_steps)}",
     )
 
     log_dir = Path(hydra_cfg.run.dir, "train").resolve()

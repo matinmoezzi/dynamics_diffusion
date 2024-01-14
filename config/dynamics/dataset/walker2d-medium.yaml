@@ -1,0 +1,6 @@
+_target_: dynamics_diffusion.rl_datasets.d4rl_load_data
+name: walker2d-medium-v0
+batch_size: ${..batch_size}
+deterministic: True
+reward_tune: null
+num_workers: 1
