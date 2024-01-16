@@ -213,9 +213,13 @@ class Workspace(object):
                 shutil.rmtree(self.replay_dir)
 
     def save(self, tag="latest"):
-        if dist_util.DistUtil.get_local_rank() == 0:
-            path = os.path.join(self.work_dir, f"{tag}.pt")
-            torch.save(self, path)
+        if (
+            dist_util.DistUtil.get_local_rank() > 0
+            and int(os.environ["WORLD_SIZE"]) > 1
+        ):
+            return
+        path = os.path.join(self.work_dir, f"{tag}.pt")
+        torch.save(self, path)
 
     @staticmethod
     def load(path):

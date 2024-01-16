@@ -1,13 +1,13 @@
 defaults:
   - _self_
-  - /model: CM_UNet
+  - /model: MLP
   - /diffusion: karras
-  - /dataset: cifar10 
+  - /dataset: maze2d-umaze 
 _target_: dynamics_diffusion.train_util.CMTrainLoop
 
 teacher_model_path: ""
 teacher_dropout: 0.1
-training_mode: "consistency_distillation"
+training_mode: "consistency_training"
 target_ema_mode: "fixed"
 scale_mode: "fixed"
 total_training_steps: 1e4

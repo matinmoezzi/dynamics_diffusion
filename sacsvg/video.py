@@ -34,7 +34,10 @@ class VideoRecorder(object):
             self.frames.append(frame)
 
     def save(self, file_name):
-        if dist_util.DistUtil.get_local_rank() != 0:
+        if (
+            dist_util.DistUtil.get_local_rank() > 0
+            and int(os.environ["WORLD_SIZE"]) > 1
+        ):
             return
         if self.enabled:
             path = os.path.join(self.save_dir, file_name)

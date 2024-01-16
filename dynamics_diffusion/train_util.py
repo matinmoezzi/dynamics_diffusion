@@ -258,22 +258,27 @@ class TrainLoop:
         logger.logkv("samples", (self.step + 1) * self.global_batch)
 
     def save(self):
-        if dist_util.DistUtil.get_local_rank() == 0:
-            snapshot = {}
-            model = self.model
-            raw_model = model.module if hasattr(model, "module") else model
-            snapshot["model_state"] = raw_model.state_dict()
-            snapshot["opt_state"] = self.opt.state_dict()
-            snapshot["step"] = self.step
-            for rate, ema in zip(self.ema_rate, self.ema):
-                snapshot[f"ema_{rate}"] = ema.state_dict()
+        if (
+            dist_util.DistUtil.get_local_rank() > 0
+            and int(os.environ["WORLD_SIZE"]) > 1
+        ):
+            return
+        snapshot = {}
+        model = self.model
+        raw_model = model.module if hasattr(model, "module") else model
+        snapshot["model_state"] = raw_model.state_dict()
+        snapshot["opt_state"] = self.opt.state_dict()
+        snapshot["step"] = self.step
+        for rate, ema in zip(self.ema_rate, self.ema):
+            snapshot[f"ema_{rate}"] = ema.state_dict()
 
-            with bf.BlobFile(
-                bf.join(get_blob_logdir(), f"checkpoint_{self.step:06d}.pt"),
-                "wb",
-            ) as f:
-                th.save(snapshot, f)
-        dist.barrier()
+        with bf.BlobFile(
+            bf.join(get_blob_logdir(), f"checkpoint_{self.step:06d}.pt"),
+            "wb",
+        ) as f:
+            th.save(snapshot, f)
+
+    dist.barrier()
 
     def _get_optimizer(self, parameters):
         if self.opt_name == "adam":
@@ -394,6 +399,11 @@ class CMTrainLoop(TrainLoop):
 
         if "_target_" in cfg.trainer.model:
             self.target_model = hydra.utils.instantiate(cfg.trainer.model)
+            if isinstance(self.target_model, functools.partial):
+                if self.target_model.func == MLP:
+                    self.target_model = self.target_model(
+                        x_dim=self.x_dim, cond_dim=self.cond_dim
+                    )
         elif cfg.trainer.model.name == "MLP":
             assert hasattr(self, "x_dim") and hasattr(
                 self, "cond_dim"
@@ -407,8 +417,12 @@ class CMTrainLoop(TrainLoop):
         self.target_model.to(dist_util.DistUtil.dev())
         self.target_model.train()
 
-        for dst, src in zip(self.target_model.parameters(), self.model.parameters()):
+        for dst, src in zip(
+            self.target_model.parameters(), self.mp_trainer.model.parameters()
+        ):
             dst.data.copy_(src.data)
+
+        self.target_model = copy.deepcopy(self.mp_trainer.model)
 
         if self.target_model:
             if self.resume_checkpoint:
@@ -606,35 +620,40 @@ class CMTrainLoop(TrainLoop):
             self.mp_trainer.backward(loss)
 
     def save(self):
-        if dist_util.DistUtil.get_local_rank() == 0:
-            import blobfile as bf
+        if (
+            dist_util.DistUtil.get_local_rank() > 0
+            and int(os.environ["WORLD_SIZE"]) > 1
+        ):
+            return
+        import blobfile as bf
 
-            step = self.global_step
+        step = self.global_step
 
-            snapshot = {}
-            model = self.model
-            raw_model = model.module if hasattr(model, "module") else model
-            snapshot["model_state"] = raw_model.state_dict()
-            snapshot["opt_state"] = self.opt.state_dict()
-            snapshot["step"] = step
-            for rate, ema in zip(self.ema_rate, self.ema):
-                snapshot[f"ema_{rate}"] = ema.state_dict()
+        snapshot = {}
+        model = self.model
+        raw_model = model.module if hasattr(model, "module") else model
+        snapshot["model_state"] = raw_model.state_dict()
+        snapshot["opt_state"] = self.opt.state_dict()
+        snapshot["step"] = step
+        for rate, ema in zip(self.ema_rate, self.ema):
+            snapshot[f"ema_{rate}"] = ema.state_dict()
 
-            logger.log("saving optimizer state...")
+        logger.log("saving optimizer state...")
 
-            if self.target_model:
-                logger.log("saving target model state")
-                snapshot["target_model_state"] = self.target_model.state_dict()
-            if self.teacher_model and self.training_mode == "progdist":
-                logger.log("saving teacher model state")
-                snapshot["teacher_model_state"] = self.teacher_model.state_dict()
+        if self.target_model:
+            logger.log("saving target model state")
+            snapshot["target_model_state"] = self.target_model.state_dict()
+        if self.teacher_model and self.training_mode == "progdist":
+            logger.log("saving teacher model state")
+            snapshot["teacher_model_state"] = self.teacher_model.state_dict()
 
-            with bf.BlobFile(
-                bf.join(get_blob_logdir(), f"checkpoint_{step:06d}.pt"),
-                "wb",
-            ) as f:
-                th.save(snapshot, f)
-        dist.barrier()
+        with bf.BlobFile(
+            bf.join(get_blob_logdir(), f"checkpoint_{step:06d}.pt"),
+            "wb",
+        ) as f:
+            th.save(snapshot, f)
+
+    dist.barrier()
 
     def log_step(self):
         step = self.global_step
